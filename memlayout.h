@@ -1,0 +1,9 @@
+#ifndef MEMLAYOUT_H
+#define MEMLAYOUT_H
+
+#define UART0_BASE 0x10000000
+#define CLINT_BASE 0x02000000
+#define PLIC_BASE 0x0C000000
+#define RAM_BASE 0x80000000
+
+#endif
