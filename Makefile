@@ -1,0 +1,30 @@
+TARGET = kernel.elf
+CC = riscv64-unknown-elf-gcc
+QEMU = qemu-system-riscv64
+CFLAGS = -nostdlib \
+	 -Wall \
+	 -march=rv64gc \
+	 -mabi=lp64d \
+	 -fno-builtin \
+	 -ffreestanding \
+	 -mcmodel=medany \
+	 -Wextra \
+	 -g
+BFLAGS = -machine virt \
+	 -cpu rv64 \
+	 -smp 8 \
+	 -bios none \
+	 -kernel
+SRCS = start.S uart.c main.c
+
+all: $(TARGET)
+$(TARGET) : $(SRCS) linker.ld
+	$(CC) $(CFLAGS) -T linker.ld $(SRCS) -o $(TARGET)
+
+run: $(TARGET)
+	$(QEMU) $(BFLAGS) $(TARGET) -nographic
+
+clean:
+	rm -f $(TARGET)
+
+.PHONY: all run clean

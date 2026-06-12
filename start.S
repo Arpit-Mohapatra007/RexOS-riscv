@@ -1,6 +1,8 @@
-.text
+.section .text
 .global _start
 _start:
+	csrr a0, mhartid
+	bnez a0, _hart_park
 	la sp, _stack_top
 	la t0, _bss_start
 	la t1, _bss_end
@@ -16,7 +18,11 @@ _done:
 	wfi
 	j _done
 
-.bss
+_hart_park:
+	wfi
+	j _hart_park
+
+.section .bss
 
 .align 12
 
