@@ -1,20 +1,20 @@
 #include "memlayout.h"
 
-volatile unsigned char* update_uart(unsigned int offset) {
+volatile unsigned char* get_uart_reg(unsigned int offset) {
 	return (volatile unsigned char*)((unsigned long)(UART0_BASE + offset));
 }
 
 void uart_init(void) {
-	*(update_uart(1)) = 0x00; // Disabled Interrupt
-	*(update_uart(3)) = 0x80; // Bit 7 = 1: DLAB == 1
-	*(update_uart(0)) = 0x03; // Setting Communication Speed [Lower Bytes]
-	*(update_uart(1)) = 0x00; // [Higher Bytes] 
-	*(update_uart(3)) = 0x03; // Bit 7 = 0: DLAB == 0 -> to lock speed settings
+	*(get_uart_reg(1)) = 0x00; // Disabled Interrupt
+	*(get_uart_reg(3)) = 0x80; // Bit 7 = 1: DLAB == 1
+	*(get_uart_reg(0)) = 0x03; // Setting Communication Speed [Lower Bytes]
+	*(get_uart_reg(1)) = 0x00; // [Higher Bytes] 
+	*(get_uart_reg(3)) = 0x03; // Bit 7 = 0: DLAB == 0 -> to lock speed settings
 				 // Bit 3 = 0: Paritiy bit disabled
 				 // Bit 2 = 0: Number of Stop Bits = 1
 				 // Bit 1, Bit 0 = 1, 1:  8 data bits
 				 // Ref: https://docs.freebsd.org/en/articles/serial-uart/#_82501645016550_registers
-	*(update_uart(2)) = 0x07; // Bit 2 = 1: Transmit FIFO Reset
+	*(get_uart_reg(2)) = 0x07; // Bit 2 = 1: Transmit FIFO Reset
 				 // Bit 1 = 1: Receiver FIFO Reset
 				 // Bit 0 = 1: Transmit-Receive FIFOs are enabled
 
@@ -23,8 +23,8 @@ void uart_init(void) {
 
 void uart_putc(unsigned char text) {
 	//Polling loop
-	while( ( *(update_uart(5)) & 0x20 ) == 0 ); // Bit 5 : Transmitter FIFO is empty if 1 else when 0
-	*(update_uart(0)) = text;
+	while( ( *(get_uart_reg(5)) & 0x20 ) == 0 ); // Bit 5 : Transmitter FIFO is empty if 1 else when 0
+	*(get_uart_reg(0)) = text;
 	return;
 }
 
@@ -44,8 +44,20 @@ void uart_putsn(char* string, unsigned int max_length) {
 	return;
 }
 
+void uart_puth(unsigned long code) {
+	for (int i = 0; i < 16; i++) {
+		int nibble = ( ( code >> ( 60 - ( i * 4 ) ) ) & 0xF );
+		if ( nibble <= 9 ) {
+			uart_putc((char)(nibble + '0'));
+		} else {
+			uart_putc((char)(nibble - 10 + 'A'));
+		}
+	}
+	return;
+}
+
 unsigned char uart_getc(void) {
 	//Polling loop
-	while( ( *(update_uart(5)) & 0x01 ) == 0 ); //Bit 0 :  Receive FIFO is empty if 1 else when 0
-	return *(update_uart(0));
+	while( ( *(get_uart_reg(5)) & 0x01 ) == 0 ); //Bit 0 :  data is waiting in Receive FIFO if 1 else when 0
+	return *(get_uart_reg(0));
 }
