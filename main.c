@@ -7,8 +7,9 @@ extern void uart_putsn(char* string, unsigned int max_length);
 extern void uart_puth(unsigned long code);
 extern unsigned char uart_getc(void);
 
-void print_banner(void) {
-	uart_puts("\033[2J\033[H"); 
+void print_banner(void) { 
+	uart_puts("\033[38;5;82;48;5;236m");
+	uart_puts("\033[2J\033[H");
     	uart_puts(" ______               ____   _____\n");
     	uart_puts(" | ___ \\             / __ \\ /  ___|\n");
     	uart_puts(" | |_/ /___ _  _    | |  | |\\ `--. \n");
@@ -35,38 +36,65 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 			uart_puth(mcause);
 			switch ( error_code ) {
 				case 0:
-            	    uart_puts("[Instruction Address Misaligned]");
-           			break;
-        		case 2: 
-        			uart_puts("[Illegal Instruction Fault]");
-        			break;
-        		case 4: 
-        			uart_puts("[Address Misaligned Fault]");
-        			break;
-        		case 5:
-        			uart_puts("[Load Access Fault]");
-        			break;
-        		case 7:
-        			uart_puts("[Store Access Fault]");
-        			break;
-        		case 8:
-        			uart_puts("[Environment Call from U-mode (Syscall Entry !)]");
-        			break;
-        		case 11:
-        			uart_puts("[Environment Call from M-mode]");
-        			break;
-        		case 12: 
-        			uart_puts("[Instruction Page Fault]");
-        			break;
-        		case 13: 
-        			uart_puts("[Load Page Fault]");
-        			break;
-        		case 15: 
-        			uart_puts("[Store Page Fault]");
-        			break;
-        		default:
-        			uart_puts("[Unhandled Hardware Exception]");
-        			break;
+            	    			uart_puts("[Instruction Address Misaligned]");
+           				break;
+				case 1:
+					uart_puts("[Instruction Access Fault]");
+					break;
+        			case 2: 
+        				uart_puts("[Illegal Instruction Fault]");
+        				break;
+				case 3:
+					uart_puts("[Breakpoint]");
+					break;
+        			case 4: 
+        				uart_puts("[Load Address Misaligned]");
+        				break;
+        			case 5:
+        				uart_puts("[Load Access Fault]");
+        				break;
+				case 6:
+					uart_puts("[Store Address Misaligned]");
+					break;
+        			case 7:
+        				uart_puts("[Store Access Fault]");
+        				break;
+        			case 8:
+        				uart_puts("[Environment Call from U-mode (Syscall Entry !)]");
+        				break;
+				case 9:
+					uart_puts("[Environment Call from HS-mode]");
+					break;
+				case 10:
+					uart_puts("[Environment Call from VS-mode]");
+					break;
+        			case 11:
+        				uart_puts("[Environment Call from M-mode]");
+        				break;
+        			case 12: 
+        				uart_puts("[Instruction Page Fault]");
+        				break;
+        			case 13: 
+        				uart_puts("[Load Page Fault]");
+        				break;
+        			case 15: 
+        				uart_puts("[Store Page Fault]");
+        				break;
+				case 20:
+					uart_puts("[Instruction Guest-Page Fault]");
+					break;
+				case 21:
+					uart_puts("[Load Guest-Page Fault]");
+					break;
+				case 22:
+					uart_puts("[Virtual Instruction]");
+					break;
+				case 23:
+					uart_puts("[Store Guest-Page Fault]");
+					break;
+        			default:
+        				uart_puts("[Unhandled Hardware Exception]");
+        				break;
 			}
 			break;
 		case 1:
@@ -74,13 +102,34 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 			uart_puth(mcause);
 			switch ( error_code ) {
 				case 1: 
-					uart_puts("[Software Interrupt]");
+					uart_puts("[Supervisor Software Interrupt]");
+					break;
+				case 2:
+					uart_puts("[Virtual Supervisor Software Interrupt]");
+					break;
+				case 3:
+					uart_puts("[Machine Software Interrupt]");
 					break;
 				case 5: 
-					uart_puts("[Timer Interrupt]");
+					uart_puts("[Supervisor Timer Interrupt]");
+					break;
+				case 6:
+					uart_puts("[Virtual Supervisor Timer Interrupt]");
+					break;
+				case 7:
+					uart_puts("[Machine Time Interrupt]");
 					break;
 				case 9: 
-					uart_puts("[External Interrupt]");
+					uart_puts("[Supervisor External Interrupt]");
+					break;
+				case 10:
+					uart_puts("[Virtual Supervisor External Interrupt]");
+					break;
+				case 11:
+					uart_puts("[Machine External Interrupt]");
+					break;
+				case 12:
+					uart_puts("[Supervisor Guest External Interrupt]");
 					break;
 				default:
 					uart_puts("[Unhandled Hardware Interrrupt]");
@@ -102,16 +151,71 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 	while(1);
 }
 
+int kstrcmp(char* s1,char* s2) {
+	int idx = 0;
+	while(1){
+		if ( s1[idx] != s2[idx] ) return 0;
+		if ( s1[idx] == '\0' ) return 1;
+		idx++;
+	}
+}
+
+void cmd_parser(char* cmd) {
+	if ( kstrcmp(cmd,"help") ){
+		uart_puts("=======================================================\n");
+    		uart_puts("HELP MENU\n");
+    		uart_puts("=======================================================\n");
+		uart_puts("[+] help : Prints Help Menu\n");
+		uart_puts("[+] clear : Clears Out Entier Screen\n");
+		uart_puts("=======================================================\n");
+	} else if ( kstrcmp(cmd,"clear") ){
+		uart_puts("\033[2J\033[H");
+	} else {
+		uart_puts("[!] RexOS: command not found: ");
+		uart_puts(cmd);
+		uart_putc('\n');
+	}
+	return;
+}
+
+void prompt(void){
+	uart_puts("RexOS> ");
+	return;
+}
+
+
+#define CMD_MAX_LEN 64
+
+char cmd_buffer[CMD_MAX_LEN];
+
+unsigned int cmd_idx = 0;
+
 void kmain(void) {
 	uart_init();
 	print_banner();
+	prompt();
 	while(1) {
 		unsigned char stroke = uart_getc();
-		if(stroke == 0x08 || stroke == 0x7F){
-			uart_putc('\b'); uart_putc(' '); uart_putc('\b');
+		if ( stroke == 0x08 || stroke == 0x7F ){
+			if ( cmd_idx > 0 ){
+				cmd_idx--;
+				uart_putc('\b'); 
+				uart_putc(' '); 
+				uart_putc('\b');
+			}
+		} else if ( stroke == '\r'){
+				cmd_buffer[cmd_idx] = '\0';
+				uart_putc('\r');
+				uart_putc('\n' );
+				cmd_parser(cmd_buffer);
+				cmd_idx = 0;
+				prompt();
 		} else {
-			uart_putc(stroke);
-			if (stroke == '\r') uart_putc('\n');
+			if ( cmd_idx < (CMD_MAX_LEN - 1) ){
+				cmd_buffer[cmd_idx] = stroke;
+				uart_putc(stroke);
+				cmd_idx++;
+			}
 		}
 	}
 }
