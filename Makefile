@@ -9,13 +9,19 @@ CFLAGS = -nostdlib \
 	 -ffreestanding \
 	 -mcmodel=medany \
 	 -Wextra \
-	 -g
+	 -g \
+	 -Ikernel
 BFLAGS = -machine virt \
 	 -cpu rv64 \
 	 -smp 8 \
 	 -bios none \
 	 -kernel
-SRCS = start.S uart.c main.c
+SRCS = kernel/start.S \
+       kernel/uart.c \
+       kernel/string.c \
+       kernel/dtb.c \
+       kernel/kalloc.c \
+       kernel/main.c
 
 all: $(TARGET)
 $(TARGET) : $(SRCS) linker.ld

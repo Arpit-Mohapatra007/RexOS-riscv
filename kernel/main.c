@@ -1,11 +1,13 @@
 #include "memlayout.h"
+#include "uart.h"
+#include "string.h"
+#include "kalloc.h"
+#include "dtb.h"
 
-extern void uart_init(void);
-extern void uart_putc(unsigned char text);
-extern void uart_puts(char* string);
-extern void uart_putsn(char* string, unsigned int max_length);
-extern void uart_puth(unsigned long code);
-extern unsigned char uart_getc(void);
+#define CMD_MAX_LEN 64
+
+char cmd_buffer[CMD_MAX_LEN];
+unsigned int cmd_idx = 0;
 
 void print_banner(void) { 
 	uart_puts("\033[38;5;82;48;5;236m");
@@ -21,6 +23,11 @@ void print_banner(void) {
     	uart_puts(" Native 64-bit RISC-V Microkernel - By DreadX\n");
     	uart_puts("=======================================================\n");
     	uart_puts("\n");
+	return;
+}
+
+void prompt(void){
+	uart_puts("RexOS> ");
 	return;
 }
 
@@ -151,15 +158,6 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 	while(1);
 }
 
-int kstrcmp(char* s1,char* s2) {
-	int idx = 0;
-	while(1){
-		if ( s1[idx] != s2[idx] ) return 0;
-		if ( s1[idx] == '\0' ) return 1;
-		idx++;
-	}
-}
-
 void cmd_parser(char* cmd) {
 	if ( kstrcmp(cmd,"help") ){
 		uart_puts("=======================================================\n");
@@ -178,22 +176,11 @@ void cmd_parser(char* cmd) {
 	return;
 }
 
-void prompt(void){
-	uart_puts("RexOS> ");
-	return;
-}
-
-
-#define CMD_MAX_LEN 64
-
-char cmd_buffer[CMD_MAX_LEN];
-
-unsigned int cmd_idx = 0;
-
 void kmain(void) {
 	uart_init();
 	print_banner();
 	prompt();
+	kalloc_init();
 	while(1) {
 		unsigned char stroke = uart_getc();
 		if ( stroke == 0x08 || stroke == 0x7F ){

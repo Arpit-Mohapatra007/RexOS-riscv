@@ -1,6 +1,8 @@
 .section .text
 .global _start
 _start:
+	la t0, _dtb_ptr
+	sd a1, 0(t0)	
 	csrr a0, mhartid
 	bnez a0, _hart_park
 	la t0, _trap_handler
@@ -65,6 +67,11 @@ _trap_handler:
 _trap_handler_done:
 	wfi
 	j _trap_handler_done
+
+.section .data
+.global _dtb_ptr
+_dtb_ptr:
+	.quad 0
 
 .section .bss
 
