@@ -99,6 +99,27 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 				case 23:
 					uart_puts("[Store Guest-Page Fault]");
 					break;
+				case 100:
+					uart_puts("[Requested Block Order Exceeds MAX_ORDER Limit]");
+					break;
+				case 101:
+					uart_puts("[Out of Physical Memory]");
+					break;
+				case 102:
+					uart_puts("[Attempted to Free an OUT-OF-BOUNDS Physical Address]");
+					break;
+				case 103:
+					uart_puts("[Double-Free or Corruption Detected]");
+					break;
+				case 104:
+					uart_puts("[Physical Address is Misaligned]");
+					break;
+				case 105:
+					uart_puts("Attempted to Free an Invalid Block Head or Interior Page");
+					break;
+				case 106:
+					uart_puts("[Metadata Size Suffocates Available Physical RAM]");
+					break;
         			default:
         				uart_puts("[Unhandled Hardware Exception]");
         				break;

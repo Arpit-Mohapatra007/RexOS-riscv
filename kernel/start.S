@@ -1,10 +1,10 @@
 .section .text
 .global _start
 _start:
-	la t0, _dtb_ptr
-	sd a1, 0(t0)	
 	csrr a0, mhartid
 	bnez a0, _hart_park
+	la t0, _dtb_ptr
+	sd a1, 0(t0)
 	la t0, _trap_handler
 	csrw mtvec, t0
 	la sp, _stack_top
