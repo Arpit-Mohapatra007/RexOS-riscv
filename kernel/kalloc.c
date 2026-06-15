@@ -66,9 +66,9 @@ void* kalloc(unsigned int order){
 	
 	while ( idx == 0xFFFFFFFF ){
 		curr_order++;
-		if ( curr_order >= MAX_ORDER ){
-			kpanic(101,0);
-		}
+		
+		if ( curr_order >= MAX_ORDER ) kpanic(101,0);
+
 		idx = free_lists[curr_order];
 	}
 	
@@ -138,7 +138,8 @@ void kfree(void* phys_addr){
 		page_array[buddy_idx].prev_idx = 0xFFFFFFFF;
 		page_array[buddy_idx].next_idx = 0xFFFFFFFF;
 		
-		idx = idx & buddy_idx;
+		// idx = idx & buddy_idx;
+		idx = idx & ~(1UL << order);
 		order++;
 	}
 

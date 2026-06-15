@@ -3,6 +3,7 @@
 #include "string.h"
 #include "kalloc.h"
 #include "dtb.h"
+#include "vm.h"
 
 #define CMD_MAX_LEN 64
 
@@ -120,6 +121,9 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 				case 106:
 					uart_puts("[Metadata Size Suffocates Available Physical RAM]");
 					break;
+				case 107:
+					uart_puts("[Memory Protection Violation]");
+					break;
         			default:
         				uart_puts("[Unhandled Hardware Exception]");
         				break;
@@ -202,6 +206,7 @@ void kmain(void) {
 	print_banner();
 	prompt();
 	kalloc_init();
+	kvm_init();
 	while(1) {
 		unsigned char stroke = uart_getc();
 		if ( stroke == 0x08 || stroke == 0x7F ){
