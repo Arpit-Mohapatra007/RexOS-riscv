@@ -11,4 +11,5 @@ _load_satp:
 	sfence.vma
 	csrw satp, t2
 	sfence.vma
+	fence.i
 	ret

@@ -98,6 +98,7 @@ void* kalloc(unsigned int order){
 	page_array[idx].order = order;
 	page_array[idx].next_idx = 0xFFFFFFFF;
 	page_array[idx].prev_idx = 0xFFFFFFFF;
+	page_array[idx].alloc_caller = __builtin_return_address(0);
 
 	unsigned long phys_addr = ram.ram_base_addr + ( idx * 4096 );
 	return (void*) phys_addr;
@@ -137,6 +138,7 @@ void kfree(void* phys_addr){
 		page_array[buddy_idx].order = 0;
 		page_array[buddy_idx].prev_idx = 0xFFFFFFFF;
 		page_array[buddy_idx].next_idx = 0xFFFFFFFF;
+		page_array[buddy_idx].alloc_caller = 0;
 		
 		// idx = idx & buddy_idx;
 		idx = idx & ~(1UL << order);
@@ -153,6 +155,7 @@ void kfree(void* phys_addr){
 
 	free_lists[order] = idx;
 	page_array[idx].prev_idx = 0xFFFFFFFF;
+	page_array[idx].alloc_caller = 0;
 
 	return;
 }

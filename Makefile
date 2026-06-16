@@ -18,6 +18,7 @@ CFLAGS = -nostdlib \
 BFLAGS = -machine virt \
 	 -cpu rv64 \
 	 -smp 8 \
+	 -m 128M \
 	 -bios none \
 	 -kernel
 

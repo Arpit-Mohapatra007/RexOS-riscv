@@ -6,6 +6,7 @@ SECTIONS {
 	.text : {
 		_text_start = .;
 		*(.text*)
+		. = ALIGN(0x1000);
 		_text_end = .;
 	}
 
@@ -14,6 +15,7 @@ SECTIONS {
 	.rodata : {
 		_rodata_start = .;
 		*(.rodata*)
+		. = ALIGN(0x1000);
 		_rodata_end = .;
 	}
 
@@ -22,6 +24,7 @@ SECTIONS {
 	.data : {
 		_data_start = .;
 		*(.data*)
+		. = ALIGN(0x1000);
 		_data_end = .;
 	}
 
@@ -30,6 +33,7 @@ SECTIONS {
 	.bss : {
 		_bss_start = .;
 		*(.bss* COMMON)
+		. = ALIGN(0x1000);
 		_bss_end = .;
 	}
 	

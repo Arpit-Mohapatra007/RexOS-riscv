@@ -33,6 +33,7 @@ void prompt(void){
 }
 
 void kpanic(unsigned long mcause, unsigned long mepc) {
+	uart_puts("\n");
     	uart_puts("=======================================================\n");
     	uart_puts(" !!! KERNEL PANIC !!!\n");
     	uart_puts("=======================================================\n");
@@ -124,6 +125,21 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 				case 107:
 					uart_puts("[Memory Protection Violation]");
 					break;
+				case 108:
+					uart_puts("[Out of Physical Memory for New Slab]");
+					break;
+				case 109:
+					uart_puts("[Out of Memory for Off-Slab Descriptor Headers]");
+					break;
+				case 110:
+					uart_puts("[Failed to Allocate Level-1 Page Table]");
+					break;
+				case 111:
+					uart_puts("[Failed to Allocate Level-0 Page Table]");
+					break;
+				case 112:
+					uart_puts("[Cannot Allocate Root Page Table]");
+					break;
         			default:
         				uart_puts("[Unhandled Hardware Exception]");
         				break;
@@ -206,6 +222,7 @@ void kmain(void) {
 	print_banner();
 	prompt();
 	kalloc_init();
+	kvmalloc_init();
 	kvm_init();
 	while(1) {
 		unsigned char stroke = uart_getc();

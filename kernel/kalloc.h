@@ -6,6 +6,7 @@ struct page {
 	unsigned int flag;
 	unsigned long next_idx;
 	unsigned long prev_idx;
+	void* alloc_caller;
 };
 
 void kalloc_init(void);
