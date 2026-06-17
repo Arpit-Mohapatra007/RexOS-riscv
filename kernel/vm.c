@@ -44,7 +44,63 @@ void kvm_map(unsigned long* root_table,unsigned long vir_addr,unsigned long phys
 	
 	while ( size > 0 ){
 		unsigned short vpn_2 = ( pa_vir_addr >> 30 ) & ( 0x1FF );
+		
+		if (size >= 0x40000000 && ((pa_vir_addr & 0x3FFFFFFF) == 0) && ((pa_phys_addr & 0x3FFFFFFF) == 0)){	
+			unsigned long f_entry = root_table[vpn_2];
+
+			if ( f_entry & ( 0x1 ) ) kpanic(107,pa_phys_addr);
+
+			unsigned long ppn = ( ( pa_phys_addr >> 12 ) << 10 );
+
+			unsigned long attributes = 0x40;
+	
+			if (perm & 4) attributes |= 0x80;
+	
+			root_table[vpn_2] = ( ppn | attributes | perm | 0x1 );
+		
+			pa_vir_addr += 0x40000000;
+			pa_phys_addr += 0x40000000;
+			size -= 0x40000000;
+			continue;
+		}
+
 		unsigned short vpn_1 = ( pa_vir_addr >> 21 ) & ( 0x1FF );
+
+		if (size >= 0x200000 && ((pa_vir_addr & 0x1FFFFF) == 0) && ((pa_phys_addr & 0x1FFFFF) == 0 )){
+			unsigned long pt_lv1 = root_table[vpn_2];
+
+			if ( !( pt_lv1 & ( 0x1 ) ) ) {
+				unsigned long* new_page_lv1 = (unsigned long*)kalloc(0);
+				
+				if (new_page_lv1 == 0) kpanic(110,vir_addr);
+
+				for (int i = 0; i < 512;i++){
+					new_page_lv1[i] = 0;
+				}
+				unsigned long ppn = ((unsigned long)new_page_lv1) >> 12;
+				unsigned long pte = ( ( ppn << 10 ) | 0x1 );
+				root_table[vpn_2] = pte;
+			}
+
+			unsigned long* lv1_table = (unsigned long*)( ( root_table[vpn_2] >> 10 ) << 12 );
+			unsigned long f_entry = lv1_table[vpn_1];
+
+			if ( f_entry & ( 0x1 ) ) kpanic(107,pa_phys_addr);
+
+			unsigned long ppn = ( ( pa_phys_addr >> 12 ) << 10 );
+
+			unsigned long attributes = 0x40;
+	
+			if (perm & 4) attributes |= 0x80;
+	
+			lv1_table[vpn_1] = ( ppn | attributes | perm | 0x1 );
+		
+			pa_vir_addr += 0x200000;
+			pa_phys_addr += 0x200000;
+			size -= 0x200000;
+			continue;
+		}
+
 		unsigned short vpn_0 = ( pa_vir_addr >> 12 ) & ( 0x1FF );
 		
 		unsigned long pt_lv1 = root_table[vpn_2];

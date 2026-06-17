@@ -11,6 +11,7 @@ CFLAGS = -nostdlib \
 	 -fno-builtin \
 	 -ffreestanding \
 	 -mcmodel=medany \
+	 -msmall-data-limit=0 \
 	 -Wextra \
 	 -g \
 	 -Ikernel

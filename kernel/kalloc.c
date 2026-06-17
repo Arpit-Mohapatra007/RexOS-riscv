@@ -4,13 +4,13 @@
 
 #define MAX_ORDER 12
 
-extern char _kernel_end[];
+extern char _bss_end[];
 
 struct page *page_array;
 unsigned long *free_lists; 
 void kalloc_init(void){
 	dtb_parser();
-	unsigned long metadata_start = ( ( (unsigned long)_kernel_end + 0xFFF ) & ( ~0xFFF ) );
+	unsigned long metadata_start = ( ( (unsigned long)_bss_end + 0xFFF ) & ( ~0xFFF ) );
 	unsigned long total_pages = ram.ram_total_size / 4096;
 	unsigned long metadata_blob_size = ( total_pages * sizeof(struct page) ) + ( MAX_ORDER * 16 );
 	unsigned long metadata_end = metadata_start + metadata_blob_size;
