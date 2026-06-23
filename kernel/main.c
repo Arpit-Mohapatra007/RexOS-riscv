@@ -4,6 +4,9 @@
 #include "kalloc.h"
 #include "dtb.h"
 #include "vm.h"
+#include "timer.h"
+
+extern void _trigger_smode_software_interrupt(void);
 
 #define CMD_MAX_LEN 64
 
@@ -217,6 +220,17 @@ void cmd_parser(char* cmd) {
 	return;
 }
 
+void mtrap_router(unsigned long mcause, unsigned long mepc){
+	unsigned long error_code = ( mcause & 0x7FFFFFFFFFFFFFFFUL );
+	if (((mcause >> 63) & 0x1) && error_code == 7){
+		update_timer();
+		_trigger_smode_software_interrupt();
+	} else {
+		kpanic(mcause,mepc);
+	}		
+	return;
+}
+
 void kmain(void) {
 	uart_init();
 	print_banner();
@@ -224,6 +238,9 @@ void kmain(void) {
 	kalloc_init();
 	kvmalloc_init();
 	kvm_init();
+	dtb_parser_time();
+	uart_puth(timebase_freq);
+	timer_init();
 	while(1) {
 		unsigned char stroke = uart_getc();
 		if ( stroke == 0x08 || stroke == 0x7F ){

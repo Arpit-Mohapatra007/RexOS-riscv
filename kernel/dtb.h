@@ -7,8 +7,10 @@ struct ram_meta {
 };
 
 extern struct ram_meta ram;
+extern unsigned long timebase_freq;
 
 unsigned int kswap_endian(unsigned int input_endian);
-void dtb_parser(void);
+void dtb_parser_ram(void);
+void dtb_parser_time(void);
 
 #endif

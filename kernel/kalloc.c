@@ -9,7 +9,7 @@ extern char _bss_end[];
 struct page *page_array;
 unsigned long *free_lists; 
 void kalloc_init(void){
-	dtb_parser();
+	dtb_parser_ram();
 	unsigned long metadata_start = ( ( (unsigned long)_bss_end + 0xFFF ) & ( ~0xFFF ) );
 	unsigned long total_pages = ram.ram_total_size / 4096;
 	unsigned long metadata_blob_size = ( total_pages * sizeof(struct page) ) + ( MAX_ORDER * 16 );

@@ -1,5 +1,7 @@
 .section .text
 .global _start
+.global _trigger_smode_software_interrupt
+
 _start:
 	csrr a0, mhartid
 	bnez a0, _hart_park
@@ -34,6 +36,16 @@ _done:
 	csrc mstatus, t0
 	li t0, 0x0800
 	csrs mstatus, t0
+
+	la t0, 0x02004000
+	li t1, -1
+	sd t1, 0(t0)
+
+	li t0, 128
+	csrs mie, t0
+
+	li t0, 32
+	csrs mstatus, t0
 	
 	la t0, kmain
 	csrw mepc, t0
@@ -49,6 +61,7 @@ _hart_park:
 	wfi
 	j _hart_park
 
+.align 2
 _mmode_trap_handler:
 	addi sp, sp, -256
 	sd x1, 0(sp)
@@ -85,8 +98,41 @@ _mmode_trap_handler:
 	sd x31, 240(sp)
 	csrr a0, mcause
 	csrr a1, mepc
-	call kpanic
+	call mtrap_router
+	ld x31, 240(sp)
+	ld x30, 232(sp)
+	ld x29, 224(sp)
+	ld x28, 216(sp)
+	ld x27, 208(sp)
+	ld x26, 200(sp)
+	ld x25, 192(sp)
+	ld x24, 184(sp)
+	ld x23, 176(sp)
+	ld x22, 168(sp)
+	ld x21, 160(sp)
+	ld x20, 152(sp)
+	ld x19, 144(sp)
+	ld x18, 136(sp)
+	ld x17, 128(sp)
+	ld x16, 120(sp)
+	ld x15, 112(sp)
+	ld x14, 104(sp)
+	ld x13, 96(sp)
+	ld x12, 88(sp)
+	ld x11, 80(sp)
+	ld x10, 72(sp)
+	ld x9, 64(sp)
+	ld x8, 56(sp)
+	ld x7, 48(sp)
+	ld x6, 40(sp)
+	ld x5, 32(sp)
+	ld x4, 24(sp)
+	ld x3, 16(sp)
+	ld x1, 0(sp)
+	ld x2, 8(sp)
+	mret
 
+.align 2
 _smode_trap_handler:
 	addi sp, sp, -256
 	sd x1, 0(sp)
@@ -124,6 +170,11 @@ _smode_trap_handler:
 	csrr a0, scause
 	csrr a1, stval
 	call kpanic
+
+_trigger_smode_software_interrupt:
+	li t0, 0x2
+	csrs mip, t0
+	ret
 
 _trap_handler_done:
 	wfi

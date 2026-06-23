@@ -30,6 +30,8 @@ SRCS = kernel/start.S \
        kernel/kalloc.c \
        kernel/vm.c \
        kernel/vm.S \
+       kernel/timer.c \
+       kernel/timer.S \
        kernel/main.c
 
 all: $(TARGET)

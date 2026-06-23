@@ -1,6 +1,7 @@
 #include "kalloc.h"
 #include "main.h"
 #include "dtb.h"
+#include "memlayout.h"
 
 extern char _text_start[];
 extern char _text_end[];
@@ -164,7 +165,10 @@ void kvm_init(void){
 	}
 
 	// uart
-	kvm_map(root_table,0x10000000,0x10000000,4096,6);
+	kvm_map(root_table,UART0_BASE,UART0_BASE,4096,6);
+
+	//clint
+	kvm_map(root_table,CLINT_BASE,CLINT_BASE,0x10000,6);
 
 	//.text
 	kvm_map(root_table,(unsigned long)_text_start,(unsigned long)_text_start,(unsigned long)_text_end - (unsigned long)_text_start,10);
