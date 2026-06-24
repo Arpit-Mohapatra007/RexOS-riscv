@@ -34,6 +34,8 @@ extern void _load_sscratch(unsigned long curr_process_addr);
 
 void scheduler_init(void);
 void round_robin(void);
-void spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val);
+struct process* spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val);
+void block_process(struct process* target);
+void unblock_process(struct process* target);
 
 #endif

@@ -8,8 +8,11 @@
 #include "scheduler.h"
 
 extern void _trigger_smode_software_interrupt(void);
+extern void _set_ssie(void);
+extern void _set_seie(void);
 extern void _off_sip(void);
 extern void _load_satp(unsigned long table_root);
+extern void _wfi(void);
 
 extern struct process* curr_process;
 extern unsigned long* root_table;
@@ -18,6 +21,8 @@ extern unsigned long* root_table;
 
 char cmd_buffer[CMD_MAX_LEN];
 unsigned int cmd_idx = 0;
+
+struct process* shell_ptr = 0;
 
 void print_banner(void) { 
 	uart_puts("\033[38;5;82;48;5;236m");
@@ -149,6 +154,15 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 				case 112:
 					uart_puts("[Cannot Allocate Root Page Table]");
 					break;
+				case 113:
+					uart_puts("[Attempted to Block Idle Thread]");
+					break;
+				case 114:
+					uart_puts("[Corrupted Thread]");
+					break;
+				case 115:
+					uart_puts("[Attempted to Unblock an Active Thread]");
+					break;
         			default:
         				uart_puts("[Unhandled Hardware Exception]");
         				break;
@@ -246,43 +260,28 @@ void strap_router(unsigned long scause, unsigned long stval){
 		round_robin();
 		_load_satp(curr_process->satp);
 		_load_sscratch((unsigned long)curr_process);
-	} else {
+	} else if (((scause >> 63) & 0x1) && error_code == 9){
+		unsigned int irq = plic_claim();
+
+		if (irq == 10){
+			if (shell_ptr->state == 2) unblock_process(shell_ptr);
+		}
+
+		plic_complete(irq);
+	}else {
 		kpanic(scause,stval);
 	}		
 	return;	
 }
 
-void worker_alpha(void){
-	while(1){
-		uart_puts("[A]");
-
-		for (int i = 0; i < 100000; i++);
-	}
-}
-
-void worker_beta(void){
-	while(1){
-		uart_puts("[B]");
-
-		for (int i = 0; i < 100000; i++);
-	}
-}
-
-void kmain(void) {
-	uart_init();
-	print_banner();
-	prompt();
-	kalloc_init();
-	kvmalloc_init();
-	kvm_init();
-	dtb_parser_time();
-	scheduler_init();
-	timer_init();
-	spawn_process(worker_alpha,"TEST1",0x00000120,(unsigned long)root_table);
-	spawn_process(worker_beta,"TEST2",0x00000120,(unsigned long)root_table);
-
+void shell(void){
 	while(1) {
 		unsigned char stroke = uart_getc();
+		if (stroke == 0x00) {
+			block_process(curr_process);
+			continue;
+		}
+
 		if ( stroke == 0x08 || stroke == 0x7F ){
 			if ( cmd_idx > 0 ){
 				cmd_idx--;
@@ -304,5 +303,44 @@ void kmain(void) {
 				cmd_idx++;
 			}
 		}
+	}
+
+}
+
+void worker_alpha(void){
+	while(1){
+		uart_puts("[A]");
+
+		for (long i = 0; i < 1000000000; i++);
+	}
+}
+
+void worker_beta(void){
+	while(1){
+		uart_puts("[B]");
+
+		for (long i = 0; i < 1000000000; i++);
+	}
+}
+
+void kmain(void) {
+	uart_init();
+	print_banner();
+	prompt();
+	kalloc_init();
+	kvmalloc_init();
+	kvm_init();
+	dtb_parser_time();
+	scheduler_init();
+	timer_init();
+	struct process* A = spawn_process(worker_alpha,"TEST1",0x00000120,(unsigned long)root_table);
+	struct process* B = spawn_process(worker_beta,"TEST2",0x00000120,(unsigned long)root_table);
+	shell_ptr = spawn_process(shell,"SHELL",0x00000120,(unsigned long)root_table);
+	plic_init();
+	uart_ier_enable();
+	_set_ssie();
+	_set_seie();
+	while(1){
+		_wfi();
 	}
 }

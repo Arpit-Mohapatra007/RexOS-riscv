@@ -1,6 +1,7 @@
 .section .text
 .global _start
 .global _trigger_smode_software_interrupt
+.global _wfi
 
 _start:
 	csrr a0, mhartid
@@ -219,12 +220,16 @@ _smode_trap_handler:
 
 _trigger_smode_software_interrupt:
 	li t0, 0x2
-	csrs mip, t0
+	csrs sip, t0
 	ret
 
 _trap_handler_done:
 	wfi
 	j _trap_handler_done
+
+_wfi:
+	wfi
+	ret
 
 .section .data
 .global _dtb_ptr

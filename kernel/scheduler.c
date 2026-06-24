@@ -2,11 +2,16 @@
 #include "kalloc.h"
 #include "vm.h"
 #include "string.h"
+#include "main.h"
 
 extern unsigned long* root_table;
+extern void  _trigger_smode_software_interrupt(void);
+extern void _set_ssie(void);
+extern void _off_ssie(void);
 
 struct process* curr_process = 0;
-struct process* process_list_head = 0;
+struct process* active_process_list_head = 0;
+struct process* blocked_process_list_head = 0;
 
 unsigned long pid_counter = 0;
 
@@ -16,7 +21,7 @@ void scheduler_init(void){
 	pid_counter++;
 	curr_process->state = 1;
 	char* name = "oxomoco";
-	for (int i = 0; i < kstrlen(name); i++){
+	for (unsigned int i = 0; i < kstrlen(name); i++){
 		curr_process->name[i] = name[i];
 	}
 	curr_process->name[kstrlen(name)] = '\0';
@@ -24,25 +29,33 @@ void scheduler_init(void){
 	curr_process->magic = 0xC00C33E1;
 	curr_process->next = curr_process;
 	curr_process->prev = curr_process;
-	process_list_head = curr_process;
+	active_process_list_head = curr_process;
 	_load_sscratch((unsigned long)curr_process);
 	return;
 }
 
 void round_robin(void){
-	curr_process->state = 0;
-	curr_process = curr_process->next;
 
-	while (curr_process->magic == 0xC00C33E1 && curr_process->state != 0) curr_process = curr_process->next;
-	
+	if (curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
+
+	if (curr_process->state == 1) curr_process->state = 0;
+
+	if (curr_process->state == 2){
+		curr_process = active_process_list_head;
+	} else{
+		curr_process = curr_process->next;
+	}
+
+	while (curr_process->magic != 0xC00C33E1 || curr_process->state != 0) curr_process = curr_process->next;
+		
 	curr_process->state = 1;
 	return;
 }
 
-void spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val){
+struct process* spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val){
 	struct process* new_process = (struct process*)kvmalloc(sizeof(struct process));
 
-	if (!new_process) return;
+	if (!new_process) return 0;
 
 	new_process->pid = pid_counter;
 	pid_counter++;
@@ -54,7 +67,7 @@ void spawn_process(void (*entry_function)(void), char* name, unsigned long sstat
 
 	unsigned long* process_stack = (unsigned long*)kalloc(0);
 	
-	if (!process_stack) return;
+	if (!process_stack) return 0;
 
 	new_process->kstack = process_stack;
 
@@ -75,12 +88,76 @@ void spawn_process(void (*entry_function)(void), char* name, unsigned long sstat
 	new_process->satp = satp_val;
 	new_process->magic = 0xC00C33E1;
 
-	new_process->next = process_list_head;
-	struct process* tail = process_list_head->prev;
+	new_process->next = active_process_list_head;
+	struct process* tail = active_process_list_head->prev;
 	new_process->prev = tail;
 	tail->next = new_process;
-	process_list_head->prev = new_process;
-	process_list_head = new_process;
+	active_process_list_head->prev = new_process;
+	active_process_list_head = new_process;
+
+	return new_process;
+}
+
+void block_process(struct process* target){
+	_off_ssie();
+
+	if(target->pid == 0) kpanic(113,target->sepc);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	struct process* head = target->next;
+	struct process* tail = target->prev;
+
+	head->prev = tail;
+	tail->next = head;
+
+	if (target == active_process_list_head) active_process_list_head = target->next;
+
+	target->next = blocked_process_list_head;
+	
+	if(blocked_process_list_head != 0) blocked_process_list_head->prev = target;
+
+	target->prev = 0;
+
+	blocked_process_list_head = target;
+
+	target->state = 2;
+	
+	_set_ssie();
+	_trigger_smode_software_interrupt();
+
+	return;
+}
+
+void unblock_process(struct process* target){
+	
+	if(target->state != 2) kpanic(115,target->pid);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	target->state = 0;
+
+	if (target == blocked_process_list_head){
+		blocked_process_list_head = target->next;
+
+		if (blocked_process_list_head != 0) blocked_process_list_head->prev = 0;
+
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
+
+		head->prev = tail;
+		tail->next = head;
+	}
+	
+	target->next = active_process_list_head;
+	struct process* tail = active_process_list_head->prev;
+	target->prev = tail;
+	tail->next = target;
+	active_process_list_head->prev = target;
+	active_process_list_head = target;
+
+	_trigger_smode_software_interrupt();
 
 	return;
 }

@@ -7,5 +7,9 @@ void uart_puts(char* string);
 void uart_putsn(char* string, unsigned int max_length);
 void uart_puth(unsigned long code);
 unsigned char uart_getc(void);
+void plic_init(void);
+void uart_ier_enable(void);
+unsigned int plic_claim(void);
+void plic_complete(unsigned int irq);
 
 #endif

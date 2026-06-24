@@ -4,6 +4,10 @@ volatile unsigned char* get_uart_reg(unsigned int offset) {
 	return (volatile unsigned char*)((unsigned long)(UART0_BASE + offset));
 }
 
+volatile unsigned int* get_plic_reg(unsigned long offset){
+	return (volatile unsigned int*)((unsigned long)(PLIC_BASE + offset));
+}
+
 void uart_init(void) {
 	*(get_uart_reg(1)) = 0x00; // Disabled Interrupt
 	*(get_uart_reg(3)) = 0x80; // Bit 7 = 1: DLAB == 1
@@ -56,8 +60,32 @@ void uart_puth(unsigned long code) {
 	return;
 }
 
-unsigned char uart_getc(void) {
-	//Polling loop
-	while( ( *(get_uart_reg(5)) & 0x01 ) == 0 ); //Bit 0 :  data is waiting in Receive FIFO if 1 else when 0
-	return *(get_uart_reg(0));
+unsigned char uart_getc(void){ 
+	//Bit 0 :  data is waiting in Receive FIFO if 1 else when 0
+	if ( ( *(get_uart_reg(5)) & 0x01 ) == 1 ) return *(get_uart_reg(0));
+
+	return 0x00;
+}
+
+void plic_init(void){
+	*(get_plic_reg(0x28)) = 1;  
+	*(get_plic_reg(0x2080)) = (1 << 10);
+	*(get_plic_reg(0x201000)) = 0;
+	
+	return;
+}
+
+void uart_ier_enable(void){
+	*(get_uart_reg(1)) = 0x1;
+
+	return;
+}
+
+unsigned int plic_claim(void){
+	return *(get_plic_reg(0x201004));
+}
+
+void plic_complete(unsigned int irq){
+	*(get_plic_reg(0x201004)) = irq;
+	return;
 }

@@ -170,6 +170,9 @@ void kvm_init(void){
 	//clint
 	kvm_map(root_table,CLINT_BASE,CLINT_BASE,0x10000,6);
 
+	//plic
+	kvm_map(root_table,PLIC_BASE,PLIC_BASE,0x400000,6);
+
 	//.text
 	kvm_map(root_table,(unsigned long)_text_start,(unsigned long)_text_start,(unsigned long)_text_end - (unsigned long)_text_start,10);
 
