@@ -15,7 +15,7 @@ extern char _bss_end[];
 #define NUM_KVMALLOC_CACHES 8
 
 unsigned long* root_table;
-void _load_satp(void);
+void _load_satp(unsigned long table_root_addr);
 
 struct slab{
 	struct kvmem_cache* parent_cache;
@@ -188,7 +188,7 @@ void kvm_init(void){
 	
 	kvm_map(root_table,(unsigned long)_bss_end,(unsigned long)_bss_end,heap_size,6);
 
-	_load_satp();
+	_load_satp((unsigned long)root_table);
 
 	return;
 }

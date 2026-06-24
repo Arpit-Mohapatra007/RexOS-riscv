@@ -5,8 +5,14 @@
 #include "dtb.h"
 #include "vm.h"
 #include "timer.h"
+#include "scheduler.h"
 
 extern void _trigger_smode_software_interrupt(void);
+extern void _off_sip(void);
+extern void _load_satp(unsigned long table_root);
+
+extern struct process* curr_process;
+extern unsigned long* root_table;
 
 #define CMD_MAX_LEN 64
 
@@ -222,6 +228,7 @@ void cmd_parser(char* cmd) {
 
 void mtrap_router(unsigned long mcause, unsigned long mepc){
 	unsigned long error_code = ( mcause & 0x7FFFFFFFFFFFFFFFUL );
+
 	if (((mcause >> 63) & 0x1) && error_code == 7){
 		update_timer();
 		_trigger_smode_software_interrupt();
@@ -229,6 +236,36 @@ void mtrap_router(unsigned long mcause, unsigned long mepc){
 		kpanic(mcause,mepc);
 	}		
 	return;
+}
+
+void strap_router(unsigned long scause, unsigned long stval){
+	unsigned long error_code = ( scause & 0x7FFFFFFFFFFFFFFFUL );
+
+	if (((scause >> 63) & 0x1) && error_code == 1){
+		_off_sip();
+		round_robin();
+		_load_satp(curr_process->satp);
+		_load_sscratch((unsigned long)curr_process);
+	} else {
+		kpanic(scause,stval);
+	}		
+	return;	
+}
+
+void worker_alpha(void){
+	while(1){
+		uart_puts("[A]");
+
+		for (int i = 0; i < 100000; i++);
+	}
+}
+
+void worker_beta(void){
+	while(1){
+		uart_puts("[B]");
+
+		for (int i = 0; i < 100000; i++);
+	}
 }
 
 void kmain(void) {
@@ -239,8 +276,11 @@ void kmain(void) {
 	kvmalloc_init();
 	kvm_init();
 	dtb_parser_time();
-	uart_puth(timebase_freq);
+	scheduler_init();
 	timer_init();
+	spawn_process(worker_alpha,"TEST1",0x00000120,(unsigned long)root_table);
+	spawn_process(worker_beta,"TEST2",0x00000120,(unsigned long)root_table);
+
 	while(1) {
 		unsigned char stroke = uart_getc();
 		if ( stroke == 0x08 || stroke == 0x7F ){

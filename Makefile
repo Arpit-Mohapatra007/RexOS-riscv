@@ -32,6 +32,8 @@ SRCS = kernel/start.S \
        kernel/vm.S \
        kernel/timer.c \
        kernel/timer.S \
+       kernel/scheduler.c \
+       kernel/scheduler.S \
        kernel/main.c
 
 all: $(TARGET)
