@@ -11,6 +11,7 @@ extern void _trigger_smode_software_interrupt(void);
 extern void _set_ssie(void);
 extern void _set_seie(void);
 extern void _off_sip(void);
+extern void _off_ssie(void);
 extern void _load_satp(unsigned long table_root);
 extern void _wfi(void);
 
@@ -308,11 +309,16 @@ void shell(void){
 }
 
 void worker_alpha(void){
-	while(1){
 		uart_puts("[A]");
 
 		for (long i = 0; i < 1000000000; i++);
-	}
+
+		uart_puts("[A-DIES]");
+
+		exit_process(0);
+
+		uart_puts("[FORBIDDEN]");
+		while(1);
 }
 
 void worker_beta(void){
@@ -341,6 +347,9 @@ void kmain(void) {
 	_set_ssie();
 	_set_seie();
 	while(1){
+		_off_ssie();
+		orphan_cleaner();
+		_set_ssie();
 		_wfi();
 	}
 }

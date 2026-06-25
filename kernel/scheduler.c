@@ -12,6 +12,7 @@ extern void _off_ssie(void);
 struct process* curr_process = 0;
 struct process* active_process_list_head = 0;
 struct process* blocked_process_list_head = 0;
+struct process* zombie_process_list_head = 0;
 
 unsigned long pid_counter = 0;
 
@@ -40,7 +41,7 @@ void round_robin(void){
 
 	if (curr_process->state == 1) curr_process->state = 0;
 
-	if (curr_process->state == 2){
+	if (curr_process->state == 2 || curr_process->state == 3){
 		curr_process = active_process_list_head;
 	} else{
 		curr_process = curr_process->next;
@@ -111,7 +112,10 @@ void block_process(struct process* target){
 	head->prev = tail;
 	tail->next = head;
 
-	if (target == active_process_list_head) active_process_list_head = target->next;
+	if (target == active_process_list_head){
+		active_process_list_head = target->next;
+		active_process_list_head->prev = target->prev;
+	}
 
 	target->next = blocked_process_list_head;
 	
@@ -159,5 +163,137 @@ void unblock_process(struct process* target){
 
 	_trigger_smode_software_interrupt();
 
+	return;
+}
+
+void exit_process(unsigned long code){
+	_off_ssie();
+
+	if(curr_process->pid == 0) kpanic(113,curr_process->sepc);
+
+	if(curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
+
+	struct process* head = curr_process->next;
+	struct process* tail = curr_process->prev;
+
+	head->prev = tail;
+	tail->next = head;
+
+	if (curr_process == active_process_list_head){
+		active_process_list_head = curr_process->next;
+		active_process_list_head->prev = curr_process->prev;
+	}
+
+	curr_process->next = zombie_process_list_head;
+	
+	if(zombie_process_list_head != 0) zombie_process_list_head->prev = curr_process;
+
+	curr_process->prev = 0;
+
+	zombie_process_list_head = curr_process;
+
+	curr_process->state = 3;
+	curr_process->exit_code = code;
+
+	struct process* ptr = active_process_list_head;
+
+	if (ptr->parent_pid == curr_process->pid){
+		ptr->parent_pid = 0;
+	}
+
+	ptr = ptr->next;
+
+	while (ptr != active_process_list_head){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+	
+	ptr = blocked_process_list_head;
+
+	while (ptr != 0){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+	
+	ptr = zombie_process_list_head;
+
+	while (ptr != 0){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+	
+	_set_ssie();
+	_trigger_smode_software_interrupt();
+
+	return;	
+}
+
+unsigned long wait_process(void){
+	_off_ssie();
+
+	struct process* header = zombie_process_list_head;
+
+	while (header != 0 && header->parent_pid != curr_process->pid) header = header->next;
+
+	if (header == 0){
+		_set_ssie();
+		return (unsigned long)-1;
+	}
+
+	if (header == zombie_process_list_head){
+		zombie_process_list_head = header->next;
+		if (zombie_process_list_head != 0) {
+			zombie_process_list_head->prev = 0;
+		}
+	} else{
+		struct process* head = header->next;
+		struct process* tail = header->prev;
+
+		head->prev = tail;
+		tail->next = head;	
+	}
+	
+	unsigned long code = header->exit_code;
+
+	kfree(header->kstack);
+	kvmfree(header);
+	
+	_set_ssie();
+	return code;
+}
+
+void orphan_cleaner(void){
+	struct process* ptr = zombie_process_list_head;
+	
+	while (ptr != 0){
+		struct process* next_ptr = ptr->next;
+
+		if (ptr->parent_pid == 0){
+			if (ptr == zombie_process_list_head){
+				zombie_process_list_head = ptr->next;
+				if (zombie_process_list_head != 0) {
+					zombie_process_list_head->prev = 0;
+				}
+			} else{
+				struct process* head = ptr->next;
+				struct process* tail = ptr->prev;
+
+				head->prev = tail;
+				tail->next = head;	
+			}
+			
+			
+			kfree(ptr->kstack);
+			kvmfree(ptr);
+		}
+
+		ptr = next_ptr;
+	}
 	return;
 }
