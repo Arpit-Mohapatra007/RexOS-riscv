@@ -1,4 +1,5 @@
 #include "memlayout.h"
+#include "dtb.h"
 
 volatile unsigned char* get_uart_reg(unsigned int offset) {
 	return (volatile unsigned char*)((unsigned long)(UART0_BASE + offset));
@@ -69,9 +70,8 @@ unsigned char uart_getc(void){
 
 void plic_init(void){
 	*(get_plic_reg(0x28)) = 1;  
-	*(get_plic_reg(0x2080)) = (1 << 10);
-	*(get_plic_reg(0x201000)) = 0;
-	
+	*(get_plic_reg((0x2000 + (context_idx * 0x80)))) = (1 << 10);
+	*(get_plic_reg((0x200000 + (context_idx * 0x1000)))) = 0;	
 	return;
 }
 
@@ -82,10 +82,10 @@ void uart_ier_enable(void){
 }
 
 unsigned int plic_claim(void){
-	return *(get_plic_reg(0x201004));
+	return *(get_plic_reg((0x200004 + (context_idx * 0x1000))));
 }
 
 void plic_complete(unsigned int irq){
-	*(get_plic_reg(0x201004)) = irq;
+	*(get_plic_reg((0x200004 + (context_idx * 0x1000)))) = irq;
 	return;
 }

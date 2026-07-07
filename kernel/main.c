@@ -22,6 +22,7 @@ extern unsigned long* root_table;
 
 char cmd_buffer[CMD_MAX_LEN];
 unsigned int cmd_idx = 0;
+volatile unsigned char uart_buff = 0x00;
 
 struct process* shell_ptr = 0;
 
@@ -265,7 +266,12 @@ void strap_router(unsigned long scause, unsigned long stval){
 		unsigned int irq = plic_claim();
 
 		if (irq == 10){
-			if (shell_ptr->state == 2) unblock_process(shell_ptr);
+			unsigned char c = uart_getc();
+			uart_buff = c;
+
+			if (shell_ptr->state == 2) {
+				unblock_process(shell_ptr);
+			}
 		}
 
 		plic_complete(irq);
@@ -277,7 +283,15 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 void shell(void){
 	while(1) {
-		unsigned char stroke = uart_getc();
+		unsigned char stroke = 0x00;
+
+		if (uart_buff != 0x00){
+			stroke = uart_buff;
+			uart_buff = 0x00;
+		} else {
+			stroke = uart_getc();
+		}
+		
 		if (stroke == 0x00) {
 			block_process(curr_process);
 			continue;
@@ -308,27 +322,6 @@ void shell(void){
 
 }
 
-void worker_alpha(void){
-		uart_puts("[A]");
-
-		for (long i = 0; i < 1000000000; i++);
-
-		uart_puts("[A-DIES]");
-
-		exit_process(0);
-
-		uart_puts("[FORBIDDEN]");
-		while(1);
-}
-
-void worker_beta(void){
-	while(1){
-		uart_puts("[B]");
-
-		for (long i = 0; i < 1000000000; i++);
-	}
-}
-
 void kmain(void) {
 	uart_init();
 	print_banner();
@@ -337,10 +330,9 @@ void kmain(void) {
 	kvmalloc_init();
 	kvm_init();
 	dtb_parser_time();
+	dtb_parser_context();	
 	scheduler_init();
 	timer_init();
-	struct process* A = spawn_process(worker_alpha,"TEST1",0x00000120,(unsigned long)root_table);
-	struct process* B = spawn_process(worker_beta,"TEST2",0x00000120,(unsigned long)root_table);
 	shell_ptr = spawn_process(shell,"SHELL",0x00000120,(unsigned long)root_table);
 	plic_init();
 	uart_ier_enable();
