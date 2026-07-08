@@ -1,5 +1,6 @@
 .section .text
 .global _load_satp
+.global _flush_tlb
 
 _load_satp:
 	srli t1, a0, 12
@@ -10,4 +11,8 @@ _load_satp:
 	csrw satp, t2
 	sfence.vma
 	fence.i
+	ret
+
+_flush_tlb:
+	sfence.vma
 	ret

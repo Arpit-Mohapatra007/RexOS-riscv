@@ -11,11 +11,13 @@ extern char _data_start[];
 extern char _data_end[];
 extern char _bss_start[];
 extern char _bss_end[];
+extern char _user_trampoline[];
 
 #define NUM_KVMALLOC_CACHES 8
 
 unsigned long* root_table;
 void _load_satp(unsigned long table_root_addr);
+extern void _flush_tlb(void);
 
 struct slab{
 	struct kvmem_cache* parent_cache;
@@ -152,6 +154,8 @@ void kvm_map(unsigned long* root_table,unsigned long vir_addr,unsigned long phys
 		pa_phys_addr += 4096;
 		size -= 4096;
 	}
+
+	_flush_tlb();
 	return;
 }
 
@@ -190,6 +194,9 @@ void kvm_init(void){
 	unsigned long heap_size = ram_end - (unsigned long)_bss_end;
 	
 	kvm_map(root_table,(unsigned long)_bss_end,(unsigned long)_bss_end,heap_size,6);
+
+	//trampoline
+	kvm_map(root_table, 0x3FFFFFF000, (unsigned long)_user_trampoline, 4096, 8);
 
 	_load_satp((unsigned long)root_table);
 
@@ -351,7 +358,7 @@ void* kvmalloc(unsigned long size){
 	} else{
 		unsigned int order = 0;
 
-		while ( (4096 << order) < size ) order++;
+		while ( (4096UL << order) < size ) order++;
 		
 		slot = (unsigned long*)kalloc(order);
 	}
@@ -472,4 +479,136 @@ void kvmfree(void* slot){
 	//free alloc
 	kfree((void*)base_addr);	
 	return;
+}
+
+void uvm_map(unsigned long* user_table,unsigned long vir_addr,unsigned long phys_addr, unsigned long size, unsigned int perm){
+	unsigned long pa_vir_addr = ( vir_addr & ( ~0xFFF ) );
+	unsigned long pa_phys_addr = ( phys_addr & ( ~0xFFF ) );
+	size = ( ( size + 0xFFF ) & ( ~0xFFF ) );
+	
+	while ( size > 0 ){
+		unsigned short vpn_2 = ( pa_vir_addr >> 30 ) & ( 0x1FF );
+		
+		if (size >= 0x40000000 && ((pa_vir_addr & 0x3FFFFFFF) == 0) && ((pa_phys_addr & 0x3FFFFFFF) == 0)){	
+			unsigned long f_entry = user_table[vpn_2];
+
+			if ( f_entry & ( 0x1 ) ) kpanic(107,pa_phys_addr);
+
+			unsigned long ppn = ( ( pa_phys_addr >> 12 ) << 10 );
+
+			unsigned long attributes = 0x40;
+	
+			if (perm & 4) attributes |= 0x80;
+	
+			user_table[vpn_2] = ( ppn | attributes | 0x10 | perm | 0x1 );
+		
+			pa_vir_addr += 0x40000000;
+			pa_phys_addr += 0x40000000;
+			size -= 0x40000000;
+			continue;
+		}
+
+		unsigned short vpn_1 = ( pa_vir_addr >> 21 ) & ( 0x1FF );
+
+		if (size >= 0x200000 && ((pa_vir_addr & 0x1FFFFF) == 0) && ((pa_phys_addr & 0x1FFFFF) == 0 )){
+			unsigned long pt_lv1 = user_table[vpn_2];
+
+			if ( !( pt_lv1 & ( 0x1 ) ) ) {
+				unsigned long* new_page_lv1 = (unsigned long*)kalloc(0);
+				
+				if (new_page_lv1 == 0) kpanic(110,vir_addr);
+
+				for (int i = 0; i < 512;i++){
+					new_page_lv1[i] = 0;
+				}
+				unsigned long ppn = ((unsigned long)new_page_lv1) >> 12;
+				unsigned long pte = ( ( ppn << 10 ) | 0x1 );
+				user_table[vpn_2] = pte;
+			}
+
+			unsigned long* lv1_table = (unsigned long*)( ( user_table[vpn_2] >> 10 ) << 12 );
+			unsigned long f_entry = lv1_table[vpn_1];
+
+			if ( f_entry & ( 0x1 ) ) kpanic(107,pa_phys_addr);
+
+			unsigned long ppn = ( ( pa_phys_addr >> 12 ) << 10 );
+
+			unsigned long attributes = 0x40;
+	
+			if (perm & 4) attributes |= 0x80;
+	
+			lv1_table[vpn_1] = ( ppn | attributes | 0x10 | perm | 0x1 );
+		
+			pa_vir_addr += 0x200000;
+			pa_phys_addr += 0x200000;
+			size -= 0x200000;
+			continue;
+		}
+
+		unsigned short vpn_0 = ( pa_vir_addr >> 12 ) & ( 0x1FF );
+		
+		unsigned long pt_lv1 = user_table[vpn_2];
+
+		if ( !( pt_lv1 & ( 0x1 ) ) ) {
+			unsigned long* new_page_lv1 = (unsigned long*)kalloc(0);
+			
+			if (new_page_lv1 == 0) kpanic(110,vir_addr);
+
+			for (int i = 0; i < 512;i++){
+				new_page_lv1[i] = 0;
+			}
+			unsigned long ppn = ((unsigned long)new_page_lv1) >> 12;
+			unsigned long pte = ( ( ppn << 10 ) | 0x1 );
+			user_table[vpn_2] = pte;
+		}
+
+		unsigned long* lv1_table = (unsigned long*)( ( user_table[vpn_2] >> 10 ) << 12 );
+		unsigned long pt_lv0 = lv1_table[vpn_1];
+
+		if ( !(pt_lv0 & ( 0x1 ) ) ) {
+			unsigned long* new_page_lv0 = (unsigned long*)kalloc(0);
+
+			if (new_page_lv0 == 0) kpanic(111,vir_addr);
+
+			for (int i = 0; i < 512;i++){
+				new_page_lv0[i] = 0;
+			}
+			unsigned long ppn = ((unsigned long)new_page_lv0) >> 12;
+			unsigned long pte = ( ( ppn << 10 ) | 0x1 );
+			lv1_table[vpn_1] = pte;	
+		}
+
+		unsigned long* lv0_table = (unsigned long*)( ( lv1_table[vpn_1] >> 10 ) << 12 );
+		unsigned long f_entry = lv0_table[vpn_0];
+
+		if ( f_entry & ( 0x1 ) ) kpanic(107,pa_phys_addr);
+
+		unsigned long ppn = ( ( pa_phys_addr >> 12 ) << 10 );
+
+		unsigned long attributes = 0x40;
+
+		if (perm & 4) attributes |= 0x80;
+
+		lv0_table[vpn_0] = ( ppn | attributes | 0x10 | perm | 0x1 );
+
+		pa_vir_addr += 4096;
+		pa_phys_addr += 4096;
+		size -= 4096;
+	}
+	_flush_tlb();
+	return;
+}
+
+unsigned long* create_user_table(unsigned long* process_kstack){
+	unsigned long* new_user_table = (unsigned long*)(kalloc(0));
+
+	for (int i = 0; i < 512; i++){
+		new_user_table[i] = 0;
+	}
+	
+	kvm_map(new_user_table, 0x3FFFFFF000, (unsigned long)_user_trampoline, 4096, 8);
+
+	kvm_map(new_user_table, 0x3FFFFFE000, (unsigned long)process_kstack, 4096, 6);
+
+	return new_user_table;
 }

@@ -6,6 +6,7 @@
 #include "vm.h"
 #include "timer.h"
 #include "scheduler.h"
+#include "main.h"
 
 extern void _trigger_smode_software_interrupt(void);
 extern void _set_ssie(void);
@@ -14,17 +15,17 @@ extern void _off_sip(void);
 extern void _off_ssie(void);
 extern void _load_satp(unsigned long table_root);
 extern void _wfi(void);
+extern void _load_umode_stvec(void);
+extern void _load_smode_stvec(void);
+
+extern char _binary_user_shell_elf_start[];
 
 extern struct process* curr_process;
 extern unsigned long* root_table;
 
-#define CMD_MAX_LEN 64
-
-char cmd_buffer[CMD_MAX_LEN];
-unsigned int cmd_idx = 0;
-volatile unsigned char uart_buff = 0x00;
-
 struct process* shell_ptr = 0;
+
+volatile unsigned char uart_buff = 0x00;
 
 void print_banner(void) { 
 	uart_puts("\033[38;5;82;48;5;236m");
@@ -165,6 +166,12 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 				case 115:
 					uart_puts("[Attempted to Unblock an Active Thread]");
 					break;
+				case 116:
+					uart_puts("[Attempted to Load Corrupted ELF]");
+					break;
+				case 117:
+					uart_puts("[Motherboard does not have a Supervisor PLIC Context]");
+					break;
         			default:
         				uart_puts("[Unhandled Hardware Exception]");
         				break;
@@ -224,24 +231,6 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 	while(1);
 }
 
-void cmd_parser(char* cmd) {
-	if ( kstrcmp(cmd,"help") ){
-		uart_puts("=======================================================\n");
-    		uart_puts("HELP MENU\n");
-    		uart_puts("=======================================================\n");
-		uart_puts("[+] help : Prints Help Menu\n");
-		uart_puts("[+] clear : Clears Out Entier Screen\n");
-		uart_puts("=======================================================\n");
-	} else if ( kstrcmp(cmd,"clear") ){
-		uart_puts("\033[2J\033[H");
-	} else {
-		uart_puts("[!] RexOS: command not found: ");
-		uart_puts(cmd);
-		uart_putc('\n');
-	}
-	return;
-}
-
 void mtrap_router(unsigned long mcause, unsigned long mepc){
 	unsigned long error_code = ( mcause & 0x7FFFFFFFFFFFFFFFUL );
 
@@ -260,66 +249,68 @@ void strap_router(unsigned long scause, unsigned long stval){
 	if (((scause >> 63) & 0x1) && error_code == 1){
 		_off_sip();
 		round_robin();
-		_load_satp(curr_process->satp);
-		_load_sscratch((unsigned long)curr_process);
+
+	    if (curr_process->tf != 0 && (curr_process->tf->sstatus & 0x100) == 0){
+			_load_umode_stvec();
+	    } else {
+			_load_smode_stvec();
+	    } 
+
+	} else if ( !((scause >> 63) & 0x1) && error_code == 8){
+		curr_process->tf->epc += 4;
+		
+
+		unsigned long a7 = curr_process->tf->u_context[17];
+		unsigned long a0 = curr_process->tf->u_context[10];
+
+		switch(a7) {
+			case 1:	
+				uart_putc((unsigned char) a0);
+				break;
+			case 2:
+				shell_ptr = curr_process;
+				
+				if (uart_buff != 0x00){
+					curr_process->tf->u_context[10] = (unsigned long) uart_buff;
+					uart_buff = 0x00;
+				} else {
+					block_process(shell_ptr);
+				}
+
+				break;
+		}
+
 	} else if (((scause >> 63) & 0x1) && error_code == 9){
 		unsigned int irq = plic_claim();
-
 		if (irq == 10){
 			unsigned char c = uart_getc();
-			uart_buff = c;
 
-			if (shell_ptr->state == 2) {
+			if (shell_ptr != 0 && shell_ptr->state == 2) {
+				shell_ptr->tf->u_context[10] = (unsigned long) c;
 				unblock_process(shell_ptr);
+			} else {
+				uart_buff = c;
 			}
 		}
 
 		plic_complete(irq);
 	}else {
 		kpanic(scause,stval);
-	}		
+	}
+
+	if (curr_process->tf != 0) _load_sscratch((unsigned long)curr_process->tf);
+
 	return;	
 }
 
-void shell(void){
-	while(1) {
-		unsigned char stroke = 0x00;
-
-		if (uart_buff != 0x00){
-			stroke = uart_buff;
-			uart_buff = 0x00;
-		} else {
-			stroke = uart_getc();
-		}
-		
-		if (stroke == 0x00) {
-			block_process(curr_process);
-			continue;
-		}
-
-		if ( stroke == 0x08 || stroke == 0x7F ){
-			if ( cmd_idx > 0 ){
-				cmd_idx--;
-				uart_putc('\b'); 
-				uart_putc(' '); 
-				uart_putc('\b');
-			}
-		} else if ( stroke == '\r'){
-				cmd_buffer[cmd_idx] = '\0';
-				uart_putc('\r');
-				uart_putc('\n' );
-				cmd_parser(cmd_buffer);
-				cmd_idx = 0;
-				prompt();
-		} else {
-			if ( cmd_idx < (CMD_MAX_LEN - 1) ){
-				cmd_buffer[cmd_idx] = stroke;
-				uart_putc(stroke);
-				cmd_idx++;
-			}
-		}
+void oxomoco_loop (void){
+	while(1){
+		_off_ssie();
+		orphan_cleaner();
+		_set_ssie();
+		_set_seie();
+		_wfi();
 	}
-
 }
 
 void kmain(void) {
@@ -330,18 +321,15 @@ void kmain(void) {
 	kvmalloc_init();
 	kvm_init();
 	dtb_parser_time();
-	dtb_parser_context();	
+	dtb_parser_context();
 	scheduler_init();
 	timer_init();
-	shell_ptr = spawn_process(shell,"SHELL",0x00000120,(unsigned long)root_table);
 	plic_init();
 	uart_ier_enable();
 	_set_ssie();
 	_set_seie();
-	while(1){
-		_off_ssie();
-		orphan_cleaner();
-		_set_ssie();
-		_wfi();
-	}
+
+	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32);
+	
+	oxomoco_loop();
 }

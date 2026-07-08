@@ -2,9 +2,9 @@
 #define SCHEDULER_H
 
 struct process{
-	unsigned long context[32];
-	unsigned long sepc;
-	unsigned long sstatus;
+	unsigned long context[14];
+	struct trapframe* tf;
+	unsigned long domain_id;
 	unsigned long satp;
 	unsigned long* kstack;
 	unsigned long pid;
@@ -30,11 +30,21 @@ struct process{
 	unsigned long magic;
 };
 
+struct trapframe{
+	unsigned long u_context[32];
+	unsigned long epc;
+	unsigned long sstatus;
+	unsigned long kernel_satp;
+	unsigned long kernel_sp;
+	unsigned long kernel_trap;
+	unsigned long user_satp;
+};
+
 extern void _load_sscratch(unsigned long curr_process_addr);
 
 void scheduler_init(void);
 void round_robin(void);
-struct process* spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val);
+struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val);
 void block_process(struct process* target);
 void unblock_process(struct process* target);
 void exit_process(unsigned long code);

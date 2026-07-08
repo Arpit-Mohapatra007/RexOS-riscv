@@ -4,15 +4,22 @@
 #include "string.h"
 #include "main.h"
 
+extern char _stack_top[];
+
 extern unsigned long* root_table;
+
 extern void  _trigger_smode_software_interrupt(void);
 extern void _set_ssie(void);
 extern void _off_ssie(void);
+extern void _switch_context(struct process* out_process, struct process* in_process);
+extern void _process_bootstrap(void);
+extern void _wfi(void);
 
 struct process* curr_process = 0;
 struct process* active_process_list_head = 0;
 struct process* blocked_process_list_head = 0;
 struct process* zombie_process_list_head = 0;
+struct process* idle_process = 0;
 
 unsigned long pid_counter = 0;
 
@@ -27,15 +34,22 @@ void scheduler_init(void){
 	}
 	curr_process->name[kstrlen(name)] = '\0';
 	curr_process->satp = (unsigned long)root_table;
+	curr_process->tf = 0;
 	curr_process->magic = 0xC00C33E1;
+	curr_process->context[0] = (unsigned long) oxomoco_loop;
+	curr_process->context[1] = (unsigned long) _stack_top;
 	curr_process->next = curr_process;
 	curr_process->prev = curr_process;
 	active_process_list_head = curr_process;
-	_load_sscratch((unsigned long)curr_process);
+	idle_process = curr_process;
+	_load_sscratch((unsigned long)curr_process->tf);
 	return;
 }
 
 void round_robin(void){
+
+	struct process* out_process = curr_process;
+	unsigned int counter = 0;
 
 	if (curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
 
@@ -47,13 +61,29 @@ void round_robin(void){
 		curr_process = curr_process->next;
 	}
 
-	while (curr_process->magic != 0xC00C33E1 || curr_process->state != 0) curr_process = curr_process->next;
+	while ((curr_process->magic != 0xC00C33E1 || curr_process->state != 0) && counter < pid_counter) {
+		curr_process = curr_process->next;
+		counter++;
+	}
+
+	if (curr_process->state != 0){
+		if (idle_process != 0) {
+			curr_process = idle_process;
+		} else {
+			_wfi();
+		}
+	}
 		
 	curr_process->state = 1;
+
+	struct process* in_process = curr_process;
+
+	_switch_context(out_process,in_process);
+
 	return;
 }
 
-struct process* spawn_process(void (*entry_function)(void), char* name, unsigned long sstatus_val, unsigned long satp_val){
+struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val){
 	struct process* new_process = (struct process*)kvmalloc(sizeof(struct process));
 
 	if (!new_process) return 0;
@@ -62,7 +92,7 @@ struct process* spawn_process(void (*entry_function)(void), char* name, unsigned
 	pid_counter++;
 	new_process->state = 0;
 	
-	for (int i = 0; i < 32; i++){
+	for (int i = 0; i < 14; i++){
 		new_process->context[i] = 0;
 	}
 
@@ -72,8 +102,10 @@ struct process* spawn_process(void (*entry_function)(void), char* name, unsigned
 
 	new_process->kstack = process_stack;
 
-	unsigned long process_stack_base_addr = (unsigned long)process_stack + 4096;
-	new_process->context[2] = process_stack_base_addr;
+	unsigned long process_stack_base_addr = (unsigned long)process_stack + 4096 - sizeof(struct trapframe);
+	new_process->tf = (struct trapframe*)process_stack_base_addr;
+	new_process->context[1] = process_stack_base_addr;
+	new_process->context[0] = (unsigned long)_process_bootstrap;
 
 	int len = kstrlen(name);
 
@@ -84,11 +116,81 @@ struct process* spawn_process(void (*entry_function)(void), char* name, unsigned
 	}
 	new_process->name[len] = '\0';
 
-	new_process->sstatus = sstatus_val;
-	new_process->sepc = (unsigned long)entry_function;
-	new_process->satp = satp_val;
-	new_process->magic = 0xC00C33E1;
+	unsigned long* trap_ptr = (unsigned long*) new_process->tf;
+	for (int i = 0; i < (sizeof(struct trapframe)/8); i++){
+		trap_ptr[i] = 0;
+	}
 
+	new_process->tf->sstatus = sstatus_val;
+	new_process->tf->kernel_satp = (0x8000000000000000 | ((unsigned long)root_table >> 12));
+	new_process->tf->kernel_trap = (unsigned long)strap_router;
+	new_process->tf->kernel_sp = process_stack_base_addr;
+	new_process->domain_id = 0;
+	unsigned long* new_user_table = create_user_table(process_stack); 
+	new_process->satp = (0x8000000000000000 | ((unsigned long)new_user_table >> 12));
+	new_process->tf->user_satp = new_process->satp;
+	new_process->magic = 0xC00C33E1;
+	
+	if (!(*(_binary) == 0x7F && *(_binary + 1) == 'E' && *(_binary + 2) == 'L' && *(_binary + 3) == 'F')) kpanic(116,new_process->pid);
+
+	unsigned long e_phoff = *((unsigned long*)(_binary + 32));
+	unsigned short e_phentsize = *((unsigned short*)(_binary + 54));
+	unsigned short e_phnum = *((unsigned short*)(_binary + 56));
+
+	struct elf64_phdr {
+		unsigned int p_type; 
+		unsigned int p_flags; 
+		unsigned long p_offset; 
+		unsigned long p_vaddr; 
+		unsigned long p_paddr; 
+		unsigned long p_filesz; 
+		unsigned long p_memsz; 
+		unsigned long p_align; 
+	};
+
+	unsigned char* ph_ptr = _binary + e_phoff; 
+
+	for (unsigned short i = 0; i < e_phnum; i++){
+		struct elf64_phdr* curr_ph_ptr = (struct elf64_phdr*)ph_ptr;
+		
+		if (curr_ph_ptr->p_type == 1){
+			unsigned long mem_size = curr_ph_ptr->p_memsz;
+			unsigned int order = 0;
+			while ( mem_size > (4096 << order) ) order++;
+			unsigned char* buff = (unsigned char*)kalloc(order);
+			unsigned long file_size = curr_ph_ptr->p_filesz;
+			unsigned char* file_ptr = _binary + curr_ph_ptr->p_offset;
+			for (unsigned long j = 0;j < file_size; j++){
+				*(buff + j) = *(file_ptr + j);
+			}
+
+			for (unsigned long j = file_size; j < mem_size; j++){
+				*(buff + j) = 0x00;
+			}
+
+			unsigned int perm = 0;
+
+			if ((curr_ph_ptr->p_flags & 0x1) && !(curr_ph_ptr->p_flags & 0x2)){
+				perm += 8;
+			} else if (curr_ph_ptr->p_flags & 0x2) {
+				perm += 4;
+			}
+
+			if (curr_ph_ptr->p_flags & 0x4) perm += 2;
+			
+			uvm_map(new_user_table, curr_ph_ptr->p_vaddr, (unsigned long) buff, 4096 << order, perm);
+		}
+
+		ph_ptr += (unsigned long)(e_phentsize);
+	}
+
+	new_process->tf->epc = *((unsigned long*)(_binary + 24));
+	unsigned long* ustack = (unsigned long*)kalloc(0);
+
+	for (int i = 0; i < 512; i++) ustack[i] = 0x00;
+
+	uvm_map(new_user_table, 0x7FFFF000, (unsigned long) ustack, 4096, 6);
+	new_process->tf->u_context[2] = 0x80000000;
 	new_process->next = active_process_list_head;
 	struct process* tail = active_process_list_head->prev;
 	new_process->prev = tail;
@@ -100,9 +202,8 @@ struct process* spawn_process(void (*entry_function)(void), char* name, unsigned
 }
 
 void block_process(struct process* target){
-	_off_ssie();
 
-	if(target->pid == 0) kpanic(113,target->sepc);
+	if(target->pid == 0) kpanic(113,target->tf->epc);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
@@ -114,7 +215,6 @@ void block_process(struct process* target){
 
 	if (target == active_process_list_head){
 		active_process_list_head = target->next;
-		active_process_list_head->prev = target->prev;
 	}
 
 	target->next = blocked_process_list_head;
@@ -127,7 +227,6 @@ void block_process(struct process* target){
 
 	target->state = 2;
 	
-	_set_ssie();
 	_trigger_smode_software_interrupt();
 
 	return;
@@ -169,7 +268,7 @@ void unblock_process(struct process* target){
 void exit_process(unsigned long code){
 	_off_ssie();
 
-	if(curr_process->pid == 0) kpanic(113,curr_process->sepc);
+	if(curr_process->pid == 0) kpanic(113,curr_process->tf->epc);
 
 	if(curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
 
@@ -181,7 +280,6 @@ void exit_process(unsigned long code){
 
 	if (curr_process == active_process_list_head){
 		active_process_list_head = curr_process->next;
-		active_process_list_head->prev = curr_process->prev;
 	}
 
 	curr_process->next = zombie_process_list_head;

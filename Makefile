@@ -2,6 +2,8 @@ TARGET = kernel.elf
 
 CC = riscv64-unknown-elf-gcc
 
+OBJCOPY = riscv64-unknown-elf-objcopy
+
 QEMU = qemu-system-riscv64
 
 CFLAGS = -nostdlib \
@@ -34,7 +36,12 @@ SRCS = kernel/start.S \
        kernel/timer.S \
        kernel/scheduler.c \
        kernel/scheduler.S \
-       kernel/main.c
+       kernel/main.c \
+       user/shell_payload.o 
+
+USRCS = user/syscall.S \
+       user/util.c \
+       user/shell.c
 
 all: $(TARGET)
 
@@ -44,7 +51,13 @@ $(TARGET) : $(SRCS) linker.ld
 run: $(TARGET)
 	$(QEMU) $(BFLAGS) $(TARGET) -nographic
 
-clean:
-	rm -f $(TARGET)
+user/shell_payload.o: user/shell.elf
+	$(OBJCOPY) -I binary -O elf64-littleriscv user/shell.elf user/shell_payload.o
 
-.PHONY: all run clean
+user/shell.elf: $(USRCS) user.ld
+	$(CC) $(CFLAGS) -T user.ld $(USRCS) -o user/shell.elf
+
+clean:
+	rm -f $(TARGET) user/*.o user/*.elf kernel/*.o kernel/*.elf
+
+.PHONY: all run extract clean

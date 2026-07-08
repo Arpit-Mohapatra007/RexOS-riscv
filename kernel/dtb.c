@@ -170,7 +170,7 @@ void dtb_parser_context(void){
 
 					parser_ptr_struct += 2;
 						
-					int i = 0;
+					unsigned int i = 0;
 
 					if ( inside_plic_context && kstrcmp( "interrupts-extended",(char*) ( parser_ptr_strings + prop_nameoff ) ) ){
 
