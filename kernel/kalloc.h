@@ -9,6 +9,8 @@ struct page {
 	void* alloc_caller;
 };
 
+extern struct page *page_array;
+
 void kalloc_init(void);
 void* kalloc(unsigned int order);
 void kfree(void* page);

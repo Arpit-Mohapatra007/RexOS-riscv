@@ -19,6 +19,7 @@ extern void _load_umode_stvec(void);
 extern void _load_smode_stvec(void);
 
 extern char _binary_user_shell_elf_start[];
+extern char _binary_user_worker_elf_start[];
 
 extern struct process* curr_process;
 extern unsigned long* root_table;
@@ -278,6 +279,23 @@ void strap_router(unsigned long scause, unsigned long stval){
 				}
 
 				break;
+			case 3:
+				exit_process(a0);
+				break;
+			case 4:
+				curr_process->tf->u_context[10] = curr_process->pid;
+				break;
+			case 5:
+				curr_process->state = 0;
+				_trigger_smode_software_interrupt();
+				break;
+			case 6:
+				sleep_process(curr_process, (unsigned int)a0);
+				break;
+			case 7:
+				curr_process->tf->u_context[10] = wait_process();
+				break;
+ 
 		}
 
 	} else if (((scause >> 63) & 0x1) && error_code == 9){
@@ -330,6 +348,7 @@ void kmain(void) {
 	_set_seie();
 
 	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32);
+	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32);
 	
 	oxomoco_loop();
 }

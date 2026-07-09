@@ -8,5 +8,6 @@ void* kvmalloc(unsigned long size);
 void kvmfree(void* slot);
 void uvm_map(unsigned long* user_table,unsigned long vir_addr,unsigned long phys_addr, unsigned long size, unsigned int perm);
 unsigned long* create_user_table(unsigned long* process_kstack);
+void uvm_free(unsigned long user_page_table);
 
 #endif

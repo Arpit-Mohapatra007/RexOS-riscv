@@ -37,11 +37,16 @@ SRCS = kernel/start.S \
        kernel/scheduler.c \
        kernel/scheduler.S \
        kernel/main.c \
-       user/shell_payload.o 
+       user/shell_payload.o \
+       user/worker_payload.o
 
 USRCS = user/syscall.S \
        user/util.c \
        user/shell.c
+
+WSRCS = user/syscall.S \
+	user/util.c \
+	user/worker.c
 
 all: $(TARGET)
 
@@ -56,6 +61,13 @@ user/shell_payload.o: user/shell.elf
 
 user/shell.elf: $(USRCS) user.ld
 	$(CC) $(CFLAGS) -T user.ld $(USRCS) -o user/shell.elf
+
+user/worker_payload.o: user/worker.elf
+	$(OBJCOPY) -I binary -O elf64-littleriscv user/worker.elf user/worker_payload.o
+
+user/shell.elf: $(WSRCS) user/user.ld
+	$(CC) $(CFLAGS) -T user/user.ld $(WSRCS) -o user/worker.elf
+
 
 clean:
 	rm -f $(TARGET) user/*.o user/*.elf kernel/*.o kernel/*.elf

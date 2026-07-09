@@ -19,6 +19,7 @@ struct process* curr_process = 0;
 struct process* active_process_list_head = 0;
 struct process* blocked_process_list_head = 0;
 struct process* zombie_process_list_head = 0;
+struct process* sleeping_process_list_head = 0;
 struct process* idle_process = 0;
 
 unsigned long pid_counter = 0;
@@ -55,10 +56,49 @@ void round_robin(void){
 
 	if (curr_process->state == 1) curr_process->state = 0;
 
-	if (curr_process->state == 2 || curr_process->state == 3){
+	if (curr_process->state == 2 || curr_process->state == 3 || curr_process->state == 4){
 		curr_process = active_process_list_head;
 	} else{
 		curr_process = curr_process->next;
+	}
+
+	struct process* ptr = sleeping_process_list_head;
+
+	while (ptr != 0) {
+		struct process* next_ptr = ptr->next;
+
+		ptr->ticks_left--;
+
+		if (ptr->ticks_left == 0){
+
+			if(ptr->state != 4) kpanic(115,ptr->pid);
+
+			if(ptr->magic != 0xC00C33E1) kpanic(114,ptr->pid);
+
+			ptr->state = 0;
+
+			if (ptr == sleeping_process_list_head){
+				sleeping_process_list_head = ptr->next;
+
+				if (sleeping_process_list_head != 0) sleeping_process_list_head->prev = 0;
+
+			} else {
+				struct process* head = ptr->next;
+				struct process* tail = ptr->prev;
+
+				head->prev = tail;
+				tail->next = head;
+			}
+
+			ptr->next = active_process_list_head;
+			struct process* tail = active_process_list_head->prev;
+			ptr->prev = tail;
+			tail->next = ptr;
+			active_process_list_head->prev = ptr;
+			active_process_list_head = ptr;
+		}
+
+		ptr = next_ptr;
 	}
 
 	while ((curr_process->magic != 0xC00C33E1 || curr_process->state != 0) && counter < pid_counter) {
@@ -266,7 +306,6 @@ void unblock_process(struct process* target){
 }
 
 void exit_process(unsigned long code){
-	_off_ssie();
 
 	if(curr_process->pid == 0) kpanic(113,curr_process->tf->epc);
 
@@ -326,7 +365,6 @@ void exit_process(unsigned long code){
 		ptr = ptr->next;
 	}
 	
-	_set_ssie();
 	_trigger_smode_software_interrupt();
 
 	return;	
@@ -358,7 +396,8 @@ unsigned long wait_process(void){
 	}
 	
 	unsigned long code = header->exit_code;
-
+	
+	uvm_free(header->satp);
 	kfree(header->kstack);
 	kvmfree(header);
 	
@@ -386,7 +425,7 @@ void orphan_cleaner(void){
 				tail->next = head;	
 			}
 			
-			
+			uvm_free(ptr->satp);
 			kfree(ptr->kstack);
 			kvmfree(ptr);
 		}
@@ -394,4 +433,38 @@ void orphan_cleaner(void){
 		ptr = next_ptr;
 	}
 	return;
+}
+
+void sleep_process (struct process* target, unsigned int ticks){
+	
+	if(target->pid == 0) kpanic(113,target->tf->epc);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	struct process* head = target->next;
+	struct process* tail = target->prev;
+
+	head->prev = tail;
+	tail->next = head;
+
+	if (target == active_process_list_head){
+		active_process_list_head = target->next;
+	}
+
+	target->next = sleeping_process_list_head;
+	
+	if(sleeping_process_list_head != 0) sleeping_process_list_head->prev = target;
+
+	target->prev = 0;
+
+	sleeping_process_list_head = target;
+
+	target->state = 4;
+
+	target->ticks_left = ticks;
+	
+	_trigger_smode_software_interrupt();
+
+	return;
+	
 }

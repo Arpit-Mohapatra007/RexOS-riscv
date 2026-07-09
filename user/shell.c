@@ -12,9 +12,13 @@ void cmd_parser(char* cmd) {
     		puts("=======================================================\n");
 		puts("[+] help : Prints Help Menu\n");
 		puts("[+] clear : Clears Out Entier Screen\n");
+		puts("[+] getpid : Get Process ID of current running process\n");
 		puts("=======================================================\n");
 	} else if ( strcmp(cmd,"clear") ){
 		puts("\033[2J\033[H");
+	} else if ( strcmp(cmd, "getpid") ){
+		puth(getpid());
+		putc('\n');
 	} else {
 		puts("[!] RexOS: command not found: ");
 		puts(cmd);

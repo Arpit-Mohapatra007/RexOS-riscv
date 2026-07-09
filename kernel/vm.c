@@ -612,3 +612,65 @@ unsigned long* create_user_table(unsigned long* process_kstack){
 
 	return new_user_table;
 }
+
+void uvm_free(unsigned long user_page_table){
+	unsigned long* lv2_table = (unsigned long*)((user_page_table & 0xFFFFFFFFFFF) << 12);
+
+	for (int i = 0; i < 512; i++){
+		if (lv2_table[i] & 0x1){
+
+			if ( lv2_table[i] & 0xE ) {
+				if ( lv2_table[i] & 0x10 ){ 
+					unsigned long leaf_phys_addr = ((lv2_table[i] >> 10) << 12);
+					unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+
+					if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
+
+					lv2_table[i] = 0;
+				}
+				continue;
+	
+			} else {
+				unsigned long* lv1_table = (unsigned long*)(( lv2_table[i] >> 10) << 12);
+				for (int j = 0; j < 512; j++){
+					if (lv1_table[j] & 0x1){
+
+						if ( lv1_table[j] & 0xE ) {
+							if ( lv1_table[j] & 0x10 ){
+								unsigned long leaf_phys_addr = ((lv1_table[j] >> 10) << 12);
+								unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+
+								if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
+
+								lv1_table[j] = 0;
+							}
+							continue;
+	
+						} else {
+	
+							unsigned long* lv0_table = (unsigned long*)((lv1_table[j] >> 10) << 12);
+							for (int k = 0; k < 512; k++){
+								if (( lv0_table[k] & 0x10 ) && ( lv0_table[k] & 0x1 )){
+									unsigned long leaf_phys_addr = ((lv0_table[k] >> 10) << 12);
+									unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+
+									if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
+
+									lv0_table[k] = 0;
+								}
+							}
+
+							kfree((void*)lv0_table);
+						}
+					}
+				}
+
+				kfree((void*)lv1_table);
+			}
+		}
+	}
+
+	kfree((void*)lv2_table);
+
+	return;
+}

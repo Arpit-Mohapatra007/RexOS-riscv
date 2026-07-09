@@ -50,5 +50,6 @@ void unblock_process(struct process* target);
 void exit_process(unsigned long code);
 unsigned long wait_process(void);
 void orphan_cleaner(void);
+void sleep_process (struct process* target, unsigned int ticks);
 
 #endif
