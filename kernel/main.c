@@ -263,6 +263,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 		unsigned long a7 = curr_process->tf->u_context[17];
 		unsigned long a0 = curr_process->tf->u_context[10];
+		unsigned long a1 = curr_process->tf->u_context[11];
 
 		switch(a7) {
 			case 1:	
@@ -295,6 +296,139 @@ void strap_router(unsigned long scause, unsigned long stval){
 			case 7:
 				curr_process->tf->u_context[10] = wait_process();
 				break;
+			case 8: {
+					unsigned long phys_addr = uvm_translate(curr_process->satp, a1);
+
+					if (phys_addr == 0){
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
+						exit_process(-1);
+						break;
+					}
+
+					struct process* target = 0;
+					
+					struct process* ptr = active_process_list_head;
+
+					do {
+						if ( ptr->pid == a0 ){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					} while (ptr != active_process_list_head && target == 0);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					if (target != 0){
+						if (!(curr_process->capability_root[(target->pid / 64)] & (1UL << (target->pid % 64)))) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Access Denied to send message to - ");
+							uart_puth(target->pid);
+							uart_puts(" [");
+							uart_puts((char*)target->name);
+							uart_puts("] ");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+						if (target->mailbox_status == 0) {
+							for (int i = 0; i < (sizeof(struct ipc_msg) / 8); i++){
+								*(((unsigned long*)(&target->mailbox)) + i) = *(((unsigned long*)phys_addr) + i);
+							}
+
+							target->mailbox.sender_pid = curr_process->pid;
+
+							if (target->state == 5) unblock_ipc_process(target);
+
+							target->mailbox_status = 1;
+
+							curr_process->tf->u_context[10] = 1;
+
+						} else {
+							curr_process->tf->epc -= 4;
+							curr_process->ipc_pending_pid = target->pid;
+							block_ipc_send_process(curr_process);	
+						}
+					} else {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+					}
+
+					break;
+				}
+			case 9: {
+					unsigned long phys_addr = uvm_translate(curr_process->satp, a0);
+
+					if (phys_addr == 0){
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
+						exit_process(-1);
+						break;
+					}
+				
+					if (curr_process->mailbox_status == 0){
+						block_ipc_process(curr_process);
+					} else {
+						for (int i = 0; i < (sizeof(struct ipc_msg) / 8); i++){
+							*(((unsigned long*)phys_addr) + i) = *(((unsigned long*)(&curr_process->mailbox)) + i);
+						}
+					
+						curr_process->mailbox_status = 0;
+						curr_process->tf->u_context[10] = 1;
+						
+						struct process* ptr = blocked_ipc_send_process_list_head;
+						while (ptr != 0){
+							struct process* next_ptr = ptr->next;
+
+							if (ptr->ipc_pending_pid == curr_process->pid) unblock_ipc_send_process(ptr);
+
+							ptr = next_ptr;
+						}
+					}
+
+					break;
+				}
  
 		}
 

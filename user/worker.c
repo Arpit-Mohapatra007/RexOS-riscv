@@ -8,13 +8,22 @@ void main(void){
 		puth(pid);
 		puts("\n");
 
-		sleep(1000);
+		// sleep(1000);
 
-		puts("Hello !! After 1000 ticks");
+		// puts("Hello !! After 1000 ticks");
 
-		yield();
+		// yield();
 
-		puts("Hello After Yield !!");
+		// puts("Hello After Yield !!");
+		
+		struct ipc_msg buff;
+
+		buff.type = 3;
+		buff.data[1] = 0xDEADBEEF;
+
+		unsigned long status = send_msg(1,&buff);
+		
+		if (status == 1) puts("[WORKER] Payload Delivered !\n");
 
 		exit(1);
 

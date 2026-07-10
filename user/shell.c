@@ -13,12 +13,28 @@ void cmd_parser(char* cmd) {
 		puts("[+] help : Prints Help Menu\n");
 		puts("[+] clear : Clears Out Entier Screen\n");
 		puts("[+] getpid : Get Process ID of current running process\n");
+		puts("[+] recv : Recvieve Message from Mailbox\n");
 		puts("=======================================================\n");
 	} else if ( strcmp(cmd,"clear") ){
 		puts("\033[2J\033[H");
 	} else if ( strcmp(cmd, "getpid") ){
 		puth(getpid());
 		putc('\n');
+	} else if ( strcmp(cmd, "recv") ){
+		struct ipc_msg buff;
+		
+		recv_msg(&buff);
+		
+		puts("SENDER'S PID: ");
+		puth(buff.sender_pid);
+		putc('\n');
+		puts("TYPE OF MESSAGE: ");
+		puth(buff.type);
+		putc('\n');
+		puts("DATA RECIEVED: ");
+		puth(buff.data[1]);
+		putc('\n');
+
 	} else {
 		puts("[!] RexOS: command not found: ");
 		puts(cmd);

@@ -15,19 +15,26 @@ extern void _switch_context(struct process* out_process, struct process* in_proc
 extern void _process_bootstrap(void);
 extern void _wfi(void);
 
+#define PID_MAX 32768
+
 struct process* curr_process = 0;
 struct process* active_process_list_head = 0;
 struct process* blocked_process_list_head = 0;
 struct process* zombie_process_list_head = 0;
 struct process* sleeping_process_list_head = 0;
+struct process* blocked_ipc_process_list_head = 0;
+struct process* blocked_ipc_send_process_list_head = 0;
 struct process* idle_process = 0;
 
-unsigned long pid_counter = 0;
+unsigned long alive_thread_counter = 0;
+unsigned long next_pid = 1;
+
+unsigned long* pid_registry = 0;
 
 void scheduler_init(void){
 	curr_process = (struct process*)kvmalloc(sizeof(struct process));
-	curr_process->pid = pid_counter;
-	pid_counter++;
+	curr_process->pid = 0;
+	alive_thread_counter++;
 	curr_process->state = 1;
 	char* name = "oxomoco";
 	for (unsigned int i = 0; i < kstrlen(name); i++){
@@ -43,6 +50,14 @@ void scheduler_init(void){
 	curr_process->prev = curr_process;
 	active_process_list_head = curr_process;
 	idle_process = curr_process;
+	pid_registry = (unsigned long*)(kalloc(0));
+	
+	for (int i = 0; i < 512; i++){
+		pid_registry[i] = 0;
+	}
+
+	pid_registry[0] |= (1UL << 0);
+
 	_load_sscratch((unsigned long)curr_process->tf);
 	return;
 }
@@ -56,7 +71,7 @@ void round_robin(void){
 
 	if (curr_process->state == 1) curr_process->state = 0;
 
-	if (curr_process->state == 2 || curr_process->state == 3 || curr_process->state == 4){
+	if (curr_process->state == 2 || curr_process->state == 3 || curr_process->state == 4 || curr_process->state == 5 || curr_process->state == 6){
 		curr_process = active_process_list_head;
 	} else{
 		curr_process = curr_process->next;
@@ -101,7 +116,7 @@ void round_robin(void){
 		ptr = next_ptr;
 	}
 
-	while ((curr_process->magic != 0xC00C33E1 || curr_process->state != 0) && counter < pid_counter) {
+	while ((curr_process->magic != 0xC00C33E1 || curr_process->state != 0) && counter < alive_thread_counter) {
 		curr_process = curr_process->next;
 		counter++;
 	}
@@ -127,9 +142,34 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 	struct process* new_process = (struct process*)kvmalloc(sizeof(struct process));
 
 	if (!new_process) return 0;
+	
+	if (alive_thread_counter >= PID_MAX) return 0;
+	
+	unsigned int idx = next_pid / 64;
+	unsigned int offset = next_pid % 64;
+	
+	if (next_pid < PID_MAX && ((pid_registry[idx]) & (1UL << offset)) == 0) {
+		new_process->pid = next_pid;
+		pid_registry[idx] |= (1UL << offset);
+		alive_thread_counter++;
+		next_pid++;
+	} else {
+		if (next_pid >= PID_MAX) next_pid = 1;
+		
+		while (((pid_registry[idx]) & (1UL << offset)) != 0){
+			next_pid++;
+			idx = next_pid / 64;
+			offset = next_pid % 64;
 
-	new_process->pid = pid_counter;
-	pid_counter++;
+			if (next_pid >= PID_MAX) next_pid = 1;
+		}
+
+		new_process->pid = next_pid;
+		pid_registry[idx] |= (1UL << offset);
+		alive_thread_counter++;
+		next_pid++;
+	}
+
 	new_process->state = 0;
 	
 	for (int i = 0; i < 14; i++){
@@ -231,6 +271,19 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 
 	uvm_map(new_user_table, 0x7FFFF000, (unsigned long) ustack, 4096, 6);
 	new_process->tf->u_context[2] = 0x80000000;
+
+	new_process->parent_pid = (curr_process != 0) ? curr_process->pid : 0;
+	new_process->mailbox_status = 0;
+
+	new_process->capability_root = (unsigned long*)(kalloc(0));
+
+	for (int i = 0; i < 512; i++){
+		new_process->capability_root[i] = 0;
+	}
+
+	new_process->capability_root[0] |= (1UL << 1);
+	new_process->capability_root[idx] |= (1UL << offset);
+
 	new_process->next = active_process_list_head;
 	struct process* tail = active_process_list_head->prev;
 	new_process->prev = tail;
@@ -334,18 +387,12 @@ void exit_process(unsigned long code){
 
 	struct process* ptr = active_process_list_head;
 
-	if (ptr->parent_pid == curr_process->pid){
-		ptr->parent_pid = 0;
-	}
-
-	ptr = ptr->next;
-
-	while (ptr != active_process_list_head){
+	do {
 		if (ptr->parent_pid == curr_process->pid){
 			ptr->parent_pid = 0;
 		}
 		ptr = ptr->next;
-	}
+	} while (ptr != active_process_list_head);
 	
 	ptr = blocked_process_list_head;
 
@@ -364,7 +411,34 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
+
+	ptr = sleeping_process_list_head;
 	
+	while (ptr != 0){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+
+	ptr = blocked_ipc_process_list_head;
+	
+	while (ptr != 0){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+
+	ptr = blocked_ipc_send_process_list_head;
+	
+	while (ptr != 0){
+		if (ptr->parent_pid == curr_process->pid){
+			ptr->parent_pid = 0;
+		}
+		ptr = ptr->next;
+	}
+
 	_trigger_smode_software_interrupt();
 
 	return;	
@@ -396,9 +470,16 @@ unsigned long wait_process(void){
 	}
 	
 	unsigned long code = header->exit_code;
+
+	alive_thread_counter--;
+	unsigned int idx = header->pid / 64;
+	unsigned int offset = header->pid % 64;
+
+	pid_registry[idx] &= ~(1UL << offset);
 	
 	uvm_free(header->satp);
 	kfree(header->kstack);
+	kfree(header->capability_root);
 	kvmfree(header);
 	
 	_set_ssie();
@@ -424,15 +505,22 @@ void orphan_cleaner(void){
 				head->prev = tail;
 				tail->next = head;	
 			}
+
+			alive_thread_counter--;
+			unsigned int idx = ptr->pid / 64;
+			unsigned int offset = ptr->pid % 64;
+
+			pid_registry[idx] &= ~(1UL << offset);
+
 			
 			uvm_free(ptr->satp);
 			kfree(ptr->kstack);
+			kfree(ptr->capability_root);
 			kvmfree(ptr);
 		}
 
 		ptr = next_ptr;
 	}
-	return;
 }
 
 void sleep_process (struct process* target, unsigned int ticks){
@@ -467,4 +555,132 @@ void sleep_process (struct process* target, unsigned int ticks){
 
 	return;
 	
+}
+
+void block_ipc_process(struct process* target){
+
+	if(target->pid == 0) kpanic(113,target->tf->epc);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	struct process* head = target->next;
+	struct process* tail = target->prev;
+
+	head->prev = tail;
+	tail->next = head;
+
+	if (target == active_process_list_head){
+		active_process_list_head = target->next;
+	}
+
+	target->next = blocked_ipc_process_list_head;
+	
+	if(blocked_ipc_process_list_head != 0) blocked_ipc_process_list_head->prev = target;
+
+	target->prev = 0;
+
+	blocked_ipc_process_list_head = target;
+
+	target->state = 5;
+	
+	_trigger_smode_software_interrupt();
+
+	return;
+}
+
+void unblock_ipc_process(struct process* target){
+	
+	if(target->state != 5) kpanic(115,target->pid);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	target->state = 0;
+
+	if (target == blocked_ipc_process_list_head){
+		blocked_ipc_process_list_head = target->next;
+
+		if (blocked_ipc_process_list_head != 0) blocked_ipc_process_list_head->prev = 0;
+
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
+
+		head->prev = tail;
+		tail->next = head;
+	}
+	
+	target->next = active_process_list_head;
+	struct process* tail = active_process_list_head->prev;
+	target->prev = tail;
+	tail->next = target;
+	active_process_list_head->prev = target;
+	active_process_list_head = target;
+
+	_trigger_smode_software_interrupt();
+
+	return;
+}
+
+void block_ipc_send_process(struct process* target){
+
+	if(target->pid == 0) kpanic(113,target->tf->epc);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	struct process* head = target->next;
+	struct process* tail = target->prev;
+
+	head->prev = tail;
+	tail->next = head;
+
+	if (target == active_process_list_head){
+		active_process_list_head = target->next;
+	}
+
+	target->next = blocked_ipc_send_process_list_head;
+	
+	if(blocked_ipc_send_process_list_head != 0) blocked_ipc_send_process_list_head->prev = target;
+
+	target->prev = 0;
+
+	blocked_ipc_send_process_list_head = target;
+
+	target->state = 6;
+	
+	_trigger_smode_software_interrupt();
+
+	return;
+}
+
+void unblock_ipc_send_process(struct process* target){
+	
+	if(target->state != 6) kpanic(115,target->pid);
+
+	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
+
+	target->state = 0;
+
+	if (target == blocked_ipc_send_process_list_head){
+		blocked_ipc_send_process_list_head = target->next;
+
+		if (blocked_ipc_send_process_list_head != 0) blocked_ipc_send_process_list_head->prev = 0;
+
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
+
+		head->prev = tail;
+		tail->next = head;
+	}
+	
+	target->next = active_process_list_head;
+	struct process* tail = active_process_list_head->prev;
+	target->prev = tail;
+	tail->next = target;
+	active_process_list_head->prev = target;
+	active_process_list_head = target;
+
+	_trigger_smode_software_interrupt();
+
+	return;
 }

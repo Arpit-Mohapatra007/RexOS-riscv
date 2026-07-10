@@ -1,6 +1,22 @@
 #ifndef SCHEDULER_H
 #define SCHEDULER_H
 
+struct ipc_msg{
+	unsigned long sender_pid;
+	unsigned long type;
+	unsigned long data[6];
+};
+
+struct trapframe{
+	unsigned long u_context[32];
+	unsigned long epc;
+	unsigned long sstatus;
+	unsigned long kernel_satp;
+	unsigned long kernel_sp;
+	unsigned long kernel_trap;
+	unsigned long user_satp;
+};
+
 struct process{
 	unsigned long context[14];
 	struct trapframe* tf;
@@ -24,23 +40,26 @@ struct process{
 	unsigned long* mmap_root;
 	unsigned long fds_root;
 	unsigned long signals;
+	struct ipc_msg mailbox;
+	unsigned long ipc_pending_pid;
+	unsigned int mailbox_status;
 	struct process* next;
 	struct process* prev;
 	unsigned long exit_code;
 	unsigned long magic;
 };
 
-struct trapframe{
-	unsigned long u_context[32];
-	unsigned long epc;
-	unsigned long sstatus;
-	unsigned long kernel_satp;
-	unsigned long kernel_sp;
-	unsigned long kernel_trap;
-	unsigned long user_satp;
-};
-
 extern void _load_sscratch(unsigned long curr_process_addr);
+
+extern struct process* curr_process;
+extern struct process* active_process_list_head;
+extern struct process* blocked_process_list_head;
+extern struct process* zombie_process_list_head;
+extern struct process* sleeping_process_list_head;
+extern struct process* blocked_ipc_process_list_head;
+extern struct process* blocked_ipc_send_process_list_head;
+extern struct process* idle_process;
+
 
 void scheduler_init(void);
 void round_robin(void);
@@ -51,5 +70,8 @@ void exit_process(unsigned long code);
 unsigned long wait_process(void);
 void orphan_cleaner(void);
 void sleep_process (struct process* target, unsigned int ticks);
-
+void block_ipc_process(struct process* target);
+void unblock_ipc_process(struct process* target);
+void block_ipc_send_process(struct process* target);
+void unblock_ipc_send_process(struct process* target);
 #endif

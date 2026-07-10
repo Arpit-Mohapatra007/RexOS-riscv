@@ -7,6 +7,8 @@ extern void _sys_yield(void);
 extern void _sys_sleep(unsigned int ticks);
 extern void _sys_exit(unsigned long code);
 extern unsigned long _sys_wait(void);
+extern unsigned long _sys_send_msg(unsigned long dest_pid, struct ipc_msg* msg);
+extern unsigned long _sys_recv_msg(struct ipc_msg* buff);
 
 void puts(char* string){
 	unsigned long i = 0;
@@ -67,4 +69,12 @@ void exit (unsigned long code){
 
 unsigned long wait(void){
 	return _sys_wait();
+}
+
+unsigned long send_msg(unsigned long dest_pid, struct ipc_msg* msg){
+	return _sys_send_msg(dest_pid,msg);
+}
+
+unsigned long recv_msg(struct ipc_msg* buff){
+	return _sys_recv_msg(buff);
 }

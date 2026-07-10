@@ -6,6 +6,8 @@
 .global _sys_yield
 .global _sys_sleep
 .global _sys_wait
+.global _sys_send_msg
+.global _sys_recv_msg
 
 _sys_write:
 	li a7, 1
@@ -39,5 +41,15 @@ _sys_sleep:
 
 _sys_wait:
 	li a7, 7
+	ecall
+	ret
+
+_sys_send_msg:
+	li a7, 8
+	ecall
+	ret
+
+_sys_recv_msg:
+	li a7, 9
 	ecall
 	ret

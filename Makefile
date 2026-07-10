@@ -65,7 +65,7 @@ user/shell.elf: $(USRCS) user.ld
 user/worker_payload.o: user/worker.elf
 	$(OBJCOPY) -I binary -O elf64-littleriscv user/worker.elf user/worker_payload.o
 
-user/shell.elf: $(WSRCS) user/user.ld
+user/worker.elf: $(WSRCS) user/user.ld
 	$(CC) $(CFLAGS) -T user/user.ld $(WSRCS) -o user/worker.elf
 
 

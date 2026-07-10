@@ -613,8 +613,8 @@ unsigned long* create_user_table(unsigned long* process_kstack){
 	return new_user_table;
 }
 
-void uvm_free(unsigned long user_page_table){
-	unsigned long* lv2_table = (unsigned long*)((user_page_table & 0xFFFFFFFFFFF) << 12);
+void uvm_free(unsigned long user_satp){
+	unsigned long* lv2_table = (unsigned long*)((user_satp & 0xFFFFFFFFFFF) << 12);
 
 	for (int i = 0; i < 512; i++){
 		if (lv2_table[i] & 0x1){
@@ -673,4 +673,29 @@ void uvm_free(unsigned long user_page_table){
 	kfree((void*)lv2_table);
 
 	return;
+}
+
+unsigned long uvm_translate(unsigned long user_satp, unsigned long vir_addr) {
+	unsigned long* lv2_table = (unsigned long*)((user_satp & 0xFFFFFFFFFFF) << 12);
+
+	unsigned long pte_lv2 = lv2_table[( (vir_addr >> 30) & 0x1FF )];
+
+	if (!(pte_lv2 & 0x1)) return 0;
+
+	unsigned long* lv1_table = (unsigned long*)((pte_lv2 >> 10) << 12);
+
+	unsigned long pte_lv1 = lv1_table[(( vir_addr >> 21 ) & 0x1FF )];
+
+	if (!(pte_lv1 & 0x1)) return 0;
+
+	unsigned long* lv0_table = (unsigned long*)((pte_lv1 >> 10) << 12);
+
+	unsigned long pte_lv0 = lv0_table[(( vir_addr >> 12 ) & 0x1FF )];
+
+	if (!(pte_lv0 & 0x1)) return 0;
+
+	unsigned long phys_addr = ((pte_lv0 >> 10) << 12 ) | (vir_addr & 0xFFF);
+
+	return phys_addr;
+ 
 }
