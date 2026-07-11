@@ -9,6 +9,11 @@ extern void _sys_exit(unsigned long code);
 extern unsigned long _sys_wait(void);
 extern unsigned long _sys_send_msg(unsigned long dest_pid, struct ipc_msg* msg);
 extern unsigned long _sys_recv_msg(struct ipc_msg* buff);
+extern unsigned long _sys_grant_permit(unsigned long target_pid, unsigned long permission_pid, unsigned long rights_to_grant);
+extern unsigned long _sys_revoke_permit(unsigned long target_pid, unsigned long permission_pid);
+extern unsigned long _sys_process_count(void);
+extern unsigned long _sys_process_list(struct process_info* pif, unsigned long num_of_process);
+extern unsigned long _update_whitelist(unsigned long pid, unsigned long mode);
 
 void puts(char* string){
 	unsigned long i = 0;
@@ -77,4 +82,33 @@ unsigned long send_msg(unsigned long dest_pid, struct ipc_msg* msg){
 
 unsigned long recv_msg(struct ipc_msg* buff){
 	return _sys_recv_msg(buff);
+}
+
+unsigned long grant_permit(unsigned long target_pid, unsigned long permission_pid, unsigned long rights_to_grant){
+	return _sys_grant_permit(target_pid,permission_pid,rights_to_grant);
+}
+
+unsigned long revoke_permit(unsigned long target_pid, unsigned long permission_pid){
+	return _sys_revoke_permit(target_pid,permission_pid);
+}
+
+unsigned long process_count(void){
+	return _sys_process_count();
+}
+
+unsigned long list_all_process(struct process_info* pif){
+	unsigned long total_process = process_count();
+	return _sys_process_list(pif, total_process);
+}
+
+unsigned long list_process(struct process_info* pif, unsigned long number_of_process){
+	return _sys_process_list(pif, number_of_process);
+}
+
+unsigned long add_to_whitelist(unsigned long pid){
+	return _update_whitelist(pid, (unsigned long)1);
+}
+
+unsigned long remove_from_whitelist(unsigned long pid){
+	return _update_whitelist(pid, (unsigned long)0);
 }

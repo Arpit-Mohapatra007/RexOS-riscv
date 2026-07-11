@@ -14,6 +14,7 @@ void cmd_parser(char* cmd) {
 		puts("[+] clear : Clears Out Entier Screen\n");
 		puts("[+] getpid : Get Process ID of current running process\n");
 		puts("[+] recv : Recvieve Message from Mailbox\n");
+		puts("[+] ps : Lists all Processes with their details\n");
 		puts("=======================================================\n");
 	} else if ( strcmp(cmd,"clear") ){
 		puts("\033[2J\033[H");
@@ -34,6 +35,23 @@ void cmd_parser(char* cmd) {
 		puts("DATA RECIEVED: ");
 		puth(buff.data[1]);
 		putc('\n');
+
+	} else if ( strcmp(cmd, "ps") ) {
+		unsigned long count = process_count();
+		puts("\n[+] Total Active Threads: ");
+		puth(count);
+		putc('\n');
+
+		struct process_info pif[16];
+		unsigned long retrieved = list_all_process(pif);
+
+		for (unsigned long i = 0; i < retrieved; i++){
+			puts("PID: "); puth(pif[i].pid);
+			puts(" | Parent: "); puth(pif[i].parent_pid);
+			puts(" | State: "); puth(pif[i].state);
+			puts(" | Name: "); puts((char*)pif[i].name);
+			putc('\n');
+		}
 
 	} else {
 		puts("[!] RexOS: command not found: ");

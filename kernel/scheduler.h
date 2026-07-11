@@ -17,6 +17,15 @@ struct trapframe{
 	unsigned long user_satp;
 };
 
+struct process_info{
+	unsigned long pid;
+	unsigned long parent_pid;
+	unsigned int state;
+	unsigned int priority;
+	unsigned long cpu_time;
+	unsigned char name[24];
+};
+
 struct process{
 	unsigned long context[14];
 	struct trapframe* tf;
@@ -43,6 +52,8 @@ struct process{
 	struct ipc_msg mailbox;
 	unsigned long ipc_pending_pid;
 	unsigned int mailbox_status;
+	unsigned int active_grant;
+	unsigned long grant_whitelist[8];
 	struct process* next;
 	struct process* prev;
 	unsigned long exit_code;
@@ -60,6 +71,8 @@ extern struct process* blocked_ipc_process_list_head;
 extern struct process* blocked_ipc_send_process_list_head;
 extern struct process* idle_process;
 
+extern unsigned long alive_thread_counter;
+extern unsigned long* pid_registry;
 
 void scheduler_init(void);
 void round_robin(void);

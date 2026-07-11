@@ -7,6 +7,7 @@
 extern char _stack_top[];
 
 extern unsigned long* root_table;
+extern struct process* shell_ptr;
 
 extern void  _trigger_smode_software_interrupt(void);
 extern void _set_ssie(void);
@@ -42,6 +43,12 @@ void scheduler_init(void){
 	}
 	curr_process->name[kstrlen(name)] = '\0';
 	curr_process->satp = (unsigned long)root_table;
+	curr_process->capability_root = (unsigned long*)(kalloc(2));
+
+	for (int i = 0; i < 2048; i++){
+		curr_process->capability_root[i] = 0;
+	}
+
 	curr_process->tf = 0;
 	curr_process->magic = 0xC00C33E1;
 	curr_process->context[0] = (unsigned long) oxomoco_loop;
@@ -275,14 +282,26 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 	new_process->parent_pid = (curr_process != 0) ? curr_process->pid : 0;
 	new_process->mailbox_status = 0;
 
-	new_process->capability_root = (unsigned long*)(kalloc(0));
+	new_process->capability_root = (unsigned long*)(kalloc(2));
 
-	for (int i = 0; i < 512; i++){
+	for (int i = 0; i < 2048; i++){
 		new_process->capability_root[i] = 0;
 	}
 
-	new_process->capability_root[0] |= (1UL << 1);
-	new_process->capability_root[idx] |= (1UL << offset);
+	new_process->capability_root[0] |= (3UL << (1 * 4));
+
+	int n_idx = new_process->pid / 16;
+	int n_offset = ((new_process->pid % 16) * 4);
+
+	curr_process->capability_root[n_idx] |= (7UL << n_offset);
+
+	if ((shell_ptr != 0) && (new_process->pid != 1)) shell_ptr->capability_root[n_idx] |= (15UL << n_offset);
+
+	new_process->capability_root[n_idx] |= (1UL << n_offset);
+	
+	new_process->active_grant = 0;
+
+	for (int i = 0; i < 8; i++) new_process->grant_whitelist[i] = 0;
 
 	new_process->next = active_process_list_head;
 	struct process* tail = active_process_list_head->prev;

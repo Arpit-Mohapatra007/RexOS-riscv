@@ -264,6 +264,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 		unsigned long a7 = curr_process->tf->u_context[17];
 		unsigned long a0 = curr_process->tf->u_context[10];
 		unsigned long a1 = curr_process->tf->u_context[11];
+		unsigned long a2 = curr_process->tf->u_context[12];
+		unsigned long a3 = curr_process->tf->u_context[13];
 
 		switch(a7) {
 			case 1:	
@@ -341,6 +343,16 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 						ptr = ptr->next;
 					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
 					
 					ptr = sleeping_process_list_head;
 
@@ -353,7 +365,11 @@ void strap_router(unsigned long scause, unsigned long stval){
 					}
 					
 					if (target != 0){
-						if (!(curr_process->capability_root[(target->pid / 64)] & (1UL << (target->pid % 64)))) {
+						
+						unsigned int idx = target->pid / 16;
+						unsigned int offset = ((target->pid % 16) * 4);
+
+						if (!(curr_process->capability_root[idx] & (15UL << offset))) {
 							uart_puts("\n [RexOS] Process ");
 							uart_puth(curr_process->pid);
 							uart_puts(" [");
@@ -364,11 +380,53 @@ void strap_router(unsigned long scause, unsigned long stval){
 							uart_puts(" [");
 							uart_puts((char*)target->name);
 							uart_puts("] ");
+							uart_puts(")");
 							uart_putc('\n');
 
 							curr_process->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
+						
+						if (!(curr_process->capability_root[idx] & (2UL << offset))) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Write Rights Denied to - ");
+							uart_puth(target->pid);
+							uart_puts(" [");
+							uart_puts((char*)target->name);
+							uart_puts("] ");
+							uart_puts(")");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+
+						idx = curr_process->pid / 16;
+						offset = ((curr_process->pid % 16)* 4);
+
+						if (!(target->capability_root[idx] & (1UL << offset))) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(target->pid);
+							uart_puts(" [");
+							uart_puts((char*)target->name);
+							uart_puts("] ");
+							uart_puts("(Read Rights Denied to - ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts(")");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+
+
 						if (target->mailbox_status == 0) {
 							for (int i = 0; i < (sizeof(struct ipc_msg) / 8); i++){
 								*(((unsigned long*)(&target->mailbox)) + i) = *(((unsigned long*)phys_addr) + i);
@@ -429,6 +487,414 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 					break;
 				}
+			case 10:{
+					struct process* target = 0;
+					
+					struct process* ptr = active_process_list_head;
+
+					do {
+						if ( ptr->pid == a0 ){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					} while (ptr != active_process_list_head && target == 0);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					if (target != 0){
+						unsigned int idx = a1 / 16;
+						unsigned int offset = ((a1 % 16) * 4);
+
+						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+
+						if ( !(rights & 4UL) ) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Don't have right to grant )");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+
+						if ((rights & (a2 & 15UL)) != (a2 & 15UL)){
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Can't grant unpossessed rights )");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+	
+						}
+
+						if ((rights & 8UL) || curr_process->pid == 1) {
+						
+							target->capability_root[idx] = (target->capability_root[idx] & (~(15UL << offset))) | ((a2 & 15UL ) << offset);
+							curr_process->tf->u_context[10] = (unsigned long)1;
+							break;
+						}
+
+						int auth = 0;
+
+						for (int i = 0; i < curr_process->active_grant; i++){
+
+							if (curr_process->grant_whitelist[i] == a0){
+								auth = 1;
+								break;
+							}
+
+						}
+
+						if (auth){
+							target->capability_root[idx] = (target->capability_root[idx] & (~(15UL << offset))) | ((a2 & 15UL ) << offset);
+							curr_process->tf->u_context[10] = (unsigned long)1;
+						} else {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(This PID is not in whitelist : ");
+							uart_puth(a0);
+							uart_puts(")");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+						}
+							break;
+	
+					} else {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+					}
+
+					break;
+				}
+
+			case 11:{
+					struct process* target = 0;
+					
+					struct process* ptr = active_process_list_head;
+
+					do {
+						if ( ptr->pid == a0 ){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					} while (ptr != active_process_list_head && target == 0);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					if (target != 0){
+						unsigned int idx = a1 / 16;
+						unsigned int offset = ((a1 % 16) * 4);
+						
+						if (target->parent_pid != curr_process->pid && curr_process->pid != 1){
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Permission denied to revoke permission as PID: ");
+							uart_puth(a0);
+							uart_puts("is not its child )");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+
+						target->capability_root[idx] &= (~(15UL << offset));
+						curr_process->tf->u_context[10] = (unsigned long)1;
+					} else {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+					}
+
+					break;
+				}
+
+			case 12:
+				curr_process->tf->u_context[10] = alive_thread_counter;
+				break;
+
+			case 13:{
+					unsigned long phys_addr = uvm_translate(curr_process->satp, a0);
+
+					if (phys_addr == 0){
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
+						exit_process(-1);
+						break;
+					}
+
+					unsigned long idx = 0;
+					unsigned long target_idx = a1;
+
+					if (target_idx <= 0) {
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts(" ( Count of Processes to be listed must be positive )\n");
+						curr_process->tf->u_context[10] = -1;
+						break;	
+					}
+					
+					struct process_info* pif = (struct process_info*) phys_addr;
+
+					struct process* ptr = active_process_list_head;
+
+					do {
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					} while (ptr != active_process_list_head && idx < target_idx);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && idx < target_idx){
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && idx < target_idx){
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && idx < target_idx){
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && idx < target_idx){
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					}
+
+					ptr = zombie_process_list_head;
+
+					while (ptr != 0 && idx < target_idx){
+						pif->pid = ptr->pid;
+						pif->parent_pid = ptr->parent_pid;
+						pif->state = ptr->state;
+						pif->priority = ptr->priority;
+						pif->cpu_time = ptr->cpu_time;
+						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+						ptr = ptr->next;
+						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+						idx++;
+					}
+
+					curr_process->tf->u_context[10] = idx;
+					break;
+				}
+				
+			case 14:
+				
+				switch(a1){
+
+				case 1:{
+
+					int present = 0;
+
+					for (int i = 0; i < curr_process->active_grant; i++){
+						if (curr_process->grant_whitelist[i] == a0){
+							present = 1;
+							break;
+						}
+					}
+
+					if (present){
+						curr_process->tf->u_context[10] = 1;
+						break;
+					} else {
+						if (curr_process->active_grant == 8){
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Whitelist if already full)");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+	
+						} else {
+							curr_process->grant_whitelist[curr_process->active_grant] = a0;
+							curr_process->active_grant++;
+							curr_process->tf->u_context[10] = (unsigned long)1;
+							break;
+						}	
+					}					
+				       }
+
+				case 0:{
+					int present = 0;
+					int idx = 0;
+
+					for (int i = 0; i < curr_process->active_grant; i++){
+						if (curr_process->grant_whitelist[i] == a0){
+							present = 1;
+							idx = i;
+							break;
+						}
+					}
+
+					if (!present){
+						curr_process->tf->u_context[10] = 1;
+						break;
+					} else {
+						curr_process->grant_whitelist[idx] = curr_process->grant_whitelist[curr_process->active_grant - 1];
+						curr_process->grant_whitelist[curr_process->active_grant - 1] = 0;	
+							curr_process->active_grant--;
+							curr_process->tf->u_context[10] = (unsigned long)1;
+							break;
+						}	
+					}
+
+				default:
+					uart_puts("\n [RexOS] Process ");
+					uart_puth(curr_process->pid);
+					uart_puts(" [");
+					uart_puts((char*)curr_process->name);
+					uart_puts("] ");
+					uart_puts("(Unrecognized syscall argument.)");
+					uart_putc('\n');
+					curr_process->tf->u_context[10] = (unsigned long)-1;
+					break;
+				}
+				break;
  
 		}
 

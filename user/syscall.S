@@ -8,6 +8,11 @@
 .global _sys_wait
 .global _sys_send_msg
 .global _sys_recv_msg
+.global _sys_grant_permit
+.global _sys_revoke_permit
+.global _sys_process_count
+.global _sys_process_list
+.global _update_whitelist
 
 _sys_write:
 	li a7, 1
@@ -51,5 +56,30 @@ _sys_send_msg:
 
 _sys_recv_msg:
 	li a7, 9
+	ecall
+	ret
+
+_sys_grant_permit:
+	li a7, 10
+	ecall
+	ret
+
+_sys_revoke_permit:
+	li a7, 11
+	ecall
+	ret
+
+_sys_process_count:
+	li a7, 12
+	ecall
+	ret
+
+_sys_process_list:
+	li a7, 13
+	ecall
+	ret
+
+_update_whitelist:
+	li a7, 14
 	ecall
 	ret
