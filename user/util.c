@@ -13,7 +13,11 @@ extern unsigned long _sys_grant_permit(unsigned long target_pid, unsigned long p
 extern unsigned long _sys_revoke_permit(unsigned long target_pid, unsigned long permission_pid);
 extern unsigned long _sys_process_count(void);
 extern unsigned long _sys_process_list(struct process_info* pif, unsigned long num_of_process);
-extern unsigned long _update_whitelist(unsigned long pid, unsigned long mode);
+extern unsigned long _sys_update_whitelist(unsigned long pid, unsigned long mode);
+extern unsigned long _sys_map_shared_page(unsigned long target_pid, unsigned long caller_vaddr, unsigned long target_vaddr, unsigned long permission);
+extern unsigned long _sys_unmap_shared_page(unsigned long target_pid, unsigned long target_vaddr);
+extern unsigned long _sys_register_irq(unsigned long irq_number);
+extern unsigned long _sys_probe_vaddr(unsigned long vaddr);
 
 void puts(char* string){
 	unsigned long i = 0;
@@ -106,9 +110,24 @@ unsigned long list_process(struct process_info* pif, unsigned long number_of_pro
 }
 
 unsigned long add_to_whitelist(unsigned long pid){
-	return _update_whitelist(pid, (unsigned long)1);
+	return _sys_update_whitelist(pid, (unsigned long)1);
 }
 
 unsigned long remove_from_whitelist(unsigned long pid){
-	return _update_whitelist(pid, (unsigned long)0);
+	return _sys_update_whitelist(pid, (unsigned long)0);
+}
+
+unsigned long map_shared_page(unsigned long target_pid, unsigned long caller_vaddr, unsigned long target_vaddr, unsigned long permission){
+	return _sys_map_shared_page(target_pid, caller_vaddr, target_vaddr, permission);
+}
+unsigned long unmap_shared_page(unsigned long target_pid, unsigned long target_vaddr){
+	return _sys_unmap_shared_page(target_pid, target_vaddr);
+}
+
+unsigned long register_irq(unsigned long irq_number){
+	return _sys_register_irq(irq_number);
+}
+
+unsigned long probe_vaddr(unsigned long vaddr){
+	return _sys_probe_vaddr(vaddr);
 }

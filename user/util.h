@@ -35,5 +35,9 @@ unsigned long list_all_process(struct process_info* pif);
 unsigned long list_process(struct process_info* pif, unsigned long number_of_process);
 unsigned long add_to_whitelist(unsigned long pid);
 unsigned long remove_from_whitelist(unsigned long pid);
+unsigned long map_shared_page(unsigned long target_pid, unsigned long caller_vaddr, unsigned long target_vaddr, unsigned long permission);
+unsigned long unmap_shared_page(unsigned long target_pid, unsigned long target_vaddr);
+unsigned long register_irq(unsigned long irq_number);
+unsigned long probe_vaddr(unsigned long vaddr);
 
 #endif

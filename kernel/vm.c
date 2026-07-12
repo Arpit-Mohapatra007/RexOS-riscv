@@ -699,3 +699,28 @@ unsigned long uvm_translate(unsigned long user_satp, unsigned long vir_addr) {
 	return phys_addr;
  
 }
+
+int uvm_unmap(unsigned long user_satp, unsigned long vir_addr) {
+	unsigned long* lv2_table = (unsigned long*)((user_satp & 0xFFFFFFFFFFF) << 12);
+
+	unsigned long pte_lv2 = lv2_table[( (vir_addr >> 30) & 0x1FF )];
+
+	if (!(pte_lv2 & 0x1)) return 0;
+
+	unsigned long* lv1_table = (unsigned long*)((pte_lv2 >> 10) << 12);
+
+	unsigned long pte_lv1 = lv1_table[(( vir_addr >> 21 ) & 0x1FF )];
+
+	if (!(pte_lv1 & 0x1)) return 0;
+
+	unsigned long* lv0_table = (unsigned long*)((pte_lv1 >> 10) << 12);
+
+	unsigned long pte_lv0 = lv0_table[(( vir_addr >> 12 ) & 0x1FF )];
+
+	if (!(pte_lv0 & 0x1)) return 0;
+
+	lv0_table[(( vir_addr >> 12 ) & 0x1FF )] &= (~(0x1UL));
+
+	return 1;
+ 
+}

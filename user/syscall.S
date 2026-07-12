@@ -12,7 +12,11 @@
 .global _sys_revoke_permit
 .global _sys_process_count
 .global _sys_process_list
-.global _update_whitelist
+.global _sys_update_whitelist
+.global _sys_map_shared_page
+.global _sys_unmap_shared_page
+.global _sys_register_irq
+.global _sys_probe_vaddr
 
 _sys_write:
 	li a7, 1
@@ -79,7 +83,27 @@ _sys_process_list:
 	ecall
 	ret
 
-_update_whitelist:
+_sys_update_whitelist:
 	li a7, 14
+	ecall
+	ret
+
+_sys_map_shared_page:
+	li a7, 15
+	ecall
+	ret
+
+_sys_unmap_shared_page:
+	li a7, 16
+	ecall
+	ret
+
+_sys_register_irq:
+	li a7, 17
+	ecall
+	ret
+
+_sys_probe_vaddr:
+	li a7, 18
 	ecall
 	ret

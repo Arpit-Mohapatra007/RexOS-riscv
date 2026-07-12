@@ -17,6 +17,7 @@ extern void _load_satp(unsigned long table_root);
 extern void _wfi(void);
 extern void _load_umode_stvec(void);
 extern void _load_smode_stvec(void);
+extern void _flush_tlb(void);
 
 extern char _binary_user_shell_elf_start[];
 extern char _binary_user_worker_elf_start[];
@@ -25,6 +26,7 @@ extern struct process* curr_process;
 extern unsigned long* root_table;
 
 struct process* shell_ptr = 0;
+unsigned long irq_registry[64] = {0};
 
 volatile unsigned char uart_buff = 0x00;
 
@@ -266,6 +268,9 @@ void strap_router(unsigned long scause, unsigned long stval){
 		unsigned long a1 = curr_process->tf->u_context[11];
 		unsigned long a2 = curr_process->tf->u_context[12];
 		unsigned long a3 = curr_process->tf->u_context[13];
+		unsigned long a4 = curr_process->tf->u_context[14];
+		unsigned long a5 = curr_process->tf->u_context[15];
+		unsigned long a6 = curr_process->tf->u_context[16];
 
 		switch(a7) {
 			case 1:	
@@ -895,6 +900,224 @@ void strap_router(unsigned long scause, unsigned long stval){
 					break;
 				}
 				break;
+
+			case 15:{
+					unsigned long phys_addr = uvm_translate(curr_process->satp, a1);
+
+					if (phys_addr == 0){
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
+						exit_process(-1);
+						break;
+					}
+					
+					struct process* target = 0;
+					
+					struct process* ptr = active_process_list_head;
+
+					do {
+						if ( ptr->pid == a0 ){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					} while (ptr != active_process_list_head && target == 0);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					if (target != 0){
+						unsigned int idx = target->pid / 16;
+						unsigned int offset = ((target->pid % 16) * 4);
+
+						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+
+						if ( !(rights & 4UL) && (curr_process->pid != target->pid)) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Don't have right to grant )");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+	
+						uvm_map((unsigned long*)((target->satp & 0xFFFFFFFFFFF) << 12), a2, phys_addr, 4096, a3);
+						_flush_tlb();
+						curr_process->tf->u_context[10] = (unsigned long)1;
+
+					} else {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+					}
+
+					break;
+				}
+
+			case 16:{
+					struct process* target = 0;
+					
+					struct process* ptr = active_process_list_head;
+
+					do {
+						if ( ptr->pid == a0 ){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					} while (ptr != active_process_list_head && target == 0);
+
+					ptr = blocked_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+
+					ptr = blocked_ipc_send_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					ptr = sleeping_process_list_head;
+
+					while (ptr != 0 && target == 0){
+						if ( ptr->pid == a0){
+							target = ptr;
+						}
+
+						ptr = ptr->next;
+					}
+					
+					if (target != 0){
+						
+						unsigned int idx = target->pid / 16;
+						unsigned int offset = ((target->pid % 16) * 4);
+
+						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+
+						if ( !(rights & 4UL) && (curr_process->pid != target->pid) ) {
+							uart_puts("\n [RexOS] Process ");
+							uart_puth(curr_process->pid);
+							uart_puts(" [");
+							uart_puts((char*)curr_process->name);
+							uart_puts("] ");
+							uart_puts("(Don't have right to grant )");
+							uart_putc('\n');
+
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+							break;
+						}
+
+
+						if (uvm_unmap(target->satp, a1)){
+							_flush_tlb();
+							curr_process->tf->u_context[10] = (unsigned long)1;
+						} else {
+							curr_process->tf->u_context[10] = (unsigned long)-1;
+						}
+
+					} else {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+					}
+
+					break;	
+				}
+
+			case 17:{
+					if (curr_process->pid != 1) {
+						uart_puts("\n [RexOS] Process ");
+						uart_puth(curr_process->pid);
+						uart_puts(" [");
+						uart_puts((char*)curr_process->name);
+						uart_puts("] ");
+						uart_puts("(Hardware Claim Denied: Requires PID 1)\n");
+
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+						break;
+					}
+
+					if (a0 >= 64) {
+						curr_process->tf->u_context[10] = (unsigned long)-1;
+						break;
+					}
+
+					irq_registry[a0] = curr_process->pid;
+
+					curr_process->tf->u_context[10] = (unsigned long)1;
+					break;
+				}
+
+			case 18:
+				if (uvm_translate(curr_process->satp, a0)){
+					curr_process->tf->u_context[10] = 1;
+				}else{
+					curr_process->tf->u_context[10] = 0;
+				}
+
+				break;
+
  
 		}
 
