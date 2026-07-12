@@ -4,7 +4,7 @@
 struct ipc_msg{
 	unsigned long sender_pid;
 	unsigned long type;
-	unsigned long data[6];
+	unsigned long data[7];
 };
 
 struct trapframe{
@@ -29,7 +29,6 @@ struct process_info{
 struct process{
 	unsigned long context[14];
 	struct trapframe* tf;
-	unsigned long domain_id;
 	unsigned long satp;
 	unsigned long* kstack;
 	unsigned long pid;
@@ -63,7 +62,8 @@ struct process{
 extern void _load_sscratch(unsigned long curr_process_addr);
 
 extern struct process* curr_process;
-extern struct process* active_process_list_head;
+extern struct process* active_process_circles[32];
+extern unsigned long lookup_bitmap;
 extern struct process* blocked_process_list_head;
 extern struct process* zombie_process_list_head;
 extern struct process* sleeping_process_list_head;
@@ -75,8 +75,8 @@ extern unsigned long alive_thread_counter;
 extern unsigned long* pid_registry;
 
 void scheduler_init(void);
-void round_robin(void);
-struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val);
+void schedule(void);
+struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val, unsigned int priority);
 void block_process(struct process* target);
 void unblock_process(struct process* target);
 void exit_process(unsigned long code);
@@ -87,4 +87,7 @@ void block_ipc_process(struct process* target);
 void unblock_ipc_process(struct process* target);
 void block_ipc_send_process(struct process* target);
 void unblock_ipc_send_process(struct process* target);
+void update_sleep_list (void);
+void anti_starvation_sweeper(void);
+
 #endif

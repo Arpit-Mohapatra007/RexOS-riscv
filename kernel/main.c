@@ -27,7 +27,7 @@ extern unsigned long* root_table;
 
 struct process* shell_ptr = 0;
 unsigned long irq_registry[64] = {0};
-
+unsigned long starv_ticks = 0;
 volatile unsigned char uart_buff = 0x00;
 
 void print_banner(void) { 
@@ -251,7 +251,22 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 	if (((scause >> 63) & 0x1) && error_code == 1){
 		_off_sip();
-		round_robin();
+
+		curr_process->cpu_time++;
+		
+		if (curr_process->ticks_left > 0) curr_process->ticks_left--;
+
+		update_sleep_list();
+		starv_ticks++;
+		
+		if (starv_ticks == 1000){
+			anti_starvation_sweeper();
+			starv_ticks = 0;
+		}
+
+		if (curr_process->ticks_left == 0 || curr_process->state != 1){
+			schedule();
+		}
 
 	    if (curr_process->tf != 0 && (curr_process->tf->sstatus & 0x100) == 0){
 			_load_umode_stvec();
@@ -318,16 +333,23 @@ void strap_router(unsigned long scause, unsigned long stval){
 					}
 
 					struct process* target = 0;
+					struct process* ptr = 0;	
 					
-					struct process* ptr = active_process_list_head;
+					for (int i = 0; i < 32; i++){
 
-					do {
-						if ( ptr->pid == a0 ){
-							target = ptr;
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								if ( ptr->pid == a0 ){
+									target = ptr;
+								}
+			
+								ptr = ptr->next;
+							} while (ptr != active_process_list_head && target == 0);
 						}
-
-						ptr = ptr->next;
-					} while (ptr != active_process_list_head && target == 0);
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -494,16 +516,24 @@ void strap_router(unsigned long scause, unsigned long stval){
 				}
 			case 10:{
 					struct process* target = 0;
+
+					struct process* ptr = 0;
 					
-					struct process* ptr = active_process_list_head;
+					for (int i = 0; i < 32; i++){
 
-					do {
-						if ( ptr->pid == a0 ){
-							target = ptr;
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								if ( ptr->pid == a0 ){
+									target = ptr;
+								}
+			
+								ptr = ptr->next;
+							} while (ptr != active_process_list_head && target == 0);
 						}
-
-						ptr = ptr->next;
-					} while (ptr != active_process_list_head && target == 0);
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -623,16 +653,24 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 			case 11:{
 					struct process* target = 0;
+
+					struct process* ptr = 0;
 					
-					struct process* ptr = active_process_list_head;
+					for (int i = 0; i < 32; i++){
 
-					do {
-						if ( ptr->pid == a0 ){
-							target = ptr;
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								if ( ptr->pid == a0 ){
+									target = ptr;
+								}
+			
+								ptr = ptr->next;
+							} while (ptr != active_process_list_head && target == 0);
 						}
-
-						ptr = ptr->next;
-					} while (ptr != active_process_list_head && target == 0);
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -736,19 +774,27 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 					struct process_info* pif = (struct process_info*) phys_addr;
 
-					struct process* ptr = active_process_list_head;
+					struct process* ptr = 0;
 
-					do {
-						pif->pid = ptr->pid;
-						pif->parent_pid = ptr->parent_pid;
-						pif->state = ptr->state;
-						pif->priority = ptr->priority;
-						pif->cpu_time = ptr->cpu_time;
-						for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
-						ptr = ptr->next;
-						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
-						idx++;
-					} while (ptr != active_process_list_head && idx < target_idx);
+					for (int i = 0; i < 32; i++){
+
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								pif->pid = ptr->pid;
+								pif->parent_pid = ptr->parent_pid;
+								pif->state = ptr->state;
+								pif->priority = ptr->priority;
+								pif->cpu_time = ptr->cpu_time;
+								for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+								ptr = ptr->next;
+								pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+								idx++;
+							} while (ptr != active_process_list_head && idx < target_idx);
+						}
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -916,16 +962,24 @@ void strap_router(unsigned long scause, unsigned long stval){
 					}
 					
 					struct process* target = 0;
+
+					struct process* ptr = 0;
 					
-					struct process* ptr = active_process_list_head;
+					for (int i = 0; i < 32; i++){
 
-					do {
-						if ( ptr->pid == a0 ){
-							target = ptr;
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								if ( ptr->pid == a0 ){
+									target = ptr;
+								}
+			
+								ptr = ptr->next;
+							} while (ptr != active_process_list_head && target == 0);
 						}
-
-						ptr = ptr->next;
-					} while (ptr != active_process_list_head && target == 0);
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -1000,15 +1054,23 @@ void strap_router(unsigned long scause, unsigned long stval){
 			case 16:{
 					struct process* target = 0;
 					
-					struct process* ptr = active_process_list_head;
+					struct process* ptr = 0;
 
-					do {
-						if ( ptr->pid == a0 ){
-							target = ptr;
+					for (int i = 0; i < 32; i++){
+
+						if (lookup_bitmap & (1UL << i)){
+							struct process* active_process_list_head = active_process_circles[i];
+							ptr = active_process_list_head;
+
+							do {
+								if ( ptr->pid == a0 ){
+									target = ptr;
+								}
+			
+								ptr = ptr->next;
+							} while (ptr != active_process_list_head && target == 0);
 						}
-
-						ptr = ptr->next;
-					} while (ptr != active_process_list_head && target == 0);
+					}
 
 					ptr = blocked_process_list_head;
 
@@ -1170,8 +1232,8 @@ void kmain(void) {
 	_set_ssie();
 	_set_seie();
 
-	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32);
-	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32);
+	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32, 16);
+	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
 	
 	oxomoco_loop();
 }

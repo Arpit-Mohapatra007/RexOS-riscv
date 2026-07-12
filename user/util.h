@@ -4,7 +4,7 @@
 struct ipc_msg{
 	unsigned long sender_pid;
 	unsigned long type;
-	unsigned long data[6];
+	unsigned long data[7];
 };
 
 struct process_info{

@@ -50,6 +50,8 @@ void cmd_parser(char* cmd) {
 			puts(" | Parent: "); puth(pif[i].parent_pid);
 			puts(" | State: "); puth(pif[i].state);
 			puts(" | Name: "); puts((char*)pif[i].name);
+			puts(" | Priority: ");puth(pif[i].priority);
+			puts(" | CPU Time: ");puth(pif[i].cpu_time);
 			putc('\n');
 		}
 

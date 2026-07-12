@@ -19,13 +19,15 @@ extern void _wfi(void);
 #define PID_MAX 32768
 
 struct process* curr_process = 0;
-struct process* active_process_list_head = 0;
+struct process* active_process_circles[32] = {0};
+unsigned long lookup_bitmap = 0;
 struct process* blocked_process_list_head = 0;
 struct process* zombie_process_list_head = 0;
 struct process* sleeping_process_list_head = 0;
 struct process* blocked_ipc_process_list_head = 0;
 struct process* blocked_ipc_send_process_list_head = 0;
 struct process* idle_process = 0;
+struct process* emergency_process = 0;
 
 unsigned long alive_thread_counter = 0;
 unsigned long next_pid = 1;
@@ -55,7 +57,12 @@ void scheduler_init(void){
 	curr_process->context[1] = (unsigned long) _stack_top;
 	curr_process->next = curr_process;
 	curr_process->prev = curr_process;
-	active_process_list_head = curr_process;
+	curr_process->priority = 31;
+	active_process_circles[curr_process->priority] = curr_process;
+	lookup_bitmap |= (1UL << curr_process->priority);
+	curr_process->time_slice = ((curr_process->priority << 2) + 4);
+	curr_process->ticks_left = curr_process->time_slice;
+	curr_process->cpu_time = 0;
 	idle_process = curr_process;
 	pid_registry = (unsigned long*)(kalloc(0));
 	
@@ -69,73 +76,38 @@ void scheduler_init(void){
 	return;
 }
 
-void round_robin(void){
+void schedule(void){
 
 	struct process* out_process = curr_process;
-	unsigned int counter = 0;
 
 	if (curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
 
-	if (curr_process->state == 1) curr_process->state = 0;
-
-	if (curr_process->state == 2 || curr_process->state == 3 || curr_process->state == 4 || curr_process->state == 5 || curr_process->state == 6){
-		curr_process = active_process_list_head;
-	} else{
-		curr_process = curr_process->next;
+	if (curr_process->state == 1){
+		curr_process->state = 0;
+		curr_process->ticks_left = curr_process->time_slice;
+		active_process_circles[curr_process->priority] = active_process_circles[curr_process->priority]->next;
 	}
 
-	struct process* ptr = sleeping_process_list_head;
-
-	while (ptr != 0) {
-		struct process* next_ptr = ptr->next;
-
-		ptr->ticks_left--;
-
-		if (ptr->ticks_left == 0){
-
-			if(ptr->state != 4) kpanic(115,ptr->pid);
-
-			if(ptr->magic != 0xC00C33E1) kpanic(114,ptr->pid);
-
-			ptr->state = 0;
-
-			if (ptr == sleeping_process_list_head){
-				sleeping_process_list_head = ptr->next;
-
-				if (sleeping_process_list_head != 0) sleeping_process_list_head->prev = 0;
-
-			} else {
-				struct process* head = ptr->next;
-				struct process* tail = ptr->prev;
-
-				head->prev = tail;
-				tail->next = head;
+	if (emergency_process != 0){
+		curr_process = emergency_process;
+		emergency_process = 0;
+	} else {
+	
+		for (int i = 0; i < 32; i++){
+			if (lookup_bitmap & (1UL << i)){
+				curr_process = active_process_circles[i];
+				
+				if (curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
+				
+				if (i < 31) lookup_bitmap |= (((lookup_bitmap & 0xFFFFFFFF) & (~((1UL << (i+1)) - 1 ))) << 32);
+				
+				break;
 			}
-
-			ptr->next = active_process_list_head;
-			struct process* tail = active_process_list_head->prev;
-			ptr->prev = tail;
-			tail->next = ptr;
-			active_process_list_head->prev = ptr;
-			active_process_list_head = ptr;
-		}
-
-		ptr = next_ptr;
-	}
-
-	while ((curr_process->magic != 0xC00C33E1 || curr_process->state != 0) && counter < alive_thread_counter) {
-		curr_process = curr_process->next;
-		counter++;
-	}
-
-	if (curr_process->state != 0){
-		if (idle_process != 0) {
-			curr_process = idle_process;
-		} else {
-			_wfi();
 		}
 	}
-		
+
+	if (curr_process->state != 0) kpanic(114, curr_process->pid);
+
 	curr_process->state = 1;
 
 	struct process* in_process = curr_process;
@@ -145,7 +117,7 @@ void round_robin(void){
 	return;
 }
 
-struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val){
+struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_val, unsigned int priority){
 	struct process* new_process = (struct process*)kvmalloc(sizeof(struct process));
 
 	if (!new_process) return 0;
@@ -212,7 +184,6 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 	new_process->tf->kernel_satp = (0x8000000000000000 | ((unsigned long)root_table >> 12));
 	new_process->tf->kernel_trap = (unsigned long)strap_router;
 	new_process->tf->kernel_sp = process_stack_base_addr;
-	new_process->domain_id = 0;
 	unsigned long* new_user_table = create_user_table(process_stack); 
 	new_process->satp = (0x8000000000000000 | ((unsigned long)new_user_table >> 12));
 	new_process->tf->user_satp = new_process->satp;
@@ -303,12 +274,23 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 
 	for (int i = 0; i < 8; i++) new_process->grant_whitelist[i] = 0;
 
-	new_process->next = active_process_list_head;
-	struct process* tail = active_process_list_head->prev;
-	new_process->prev = tail;
-	tail->next = new_process;
-	active_process_list_head->prev = new_process;
-	active_process_list_head = new_process;
+	new_process->priority = priority;
+	new_process->time_slice = ((priority << 2) + 4);
+	new_process->ticks_left = new_process->time_slice;
+	new_process->cpu_time = 0;
+
+	if (lookup_bitmap & (1UL << priority)){
+		new_process->next = active_process_circles[priority];
+		struct process* tail = active_process_circles[priority]->prev;
+		new_process->prev = tail;
+		tail->next = new_process;
+		active_process_circles[priority]->prev = new_process;
+	} else {
+		new_process->next = new_process;
+		new_process->prev = new_process;	
+		active_process_circles[priority] = new_process;
+		lookup_bitmap |= (1UL << priority);
+	}
 
 	return new_process;
 }
@@ -319,14 +301,21 @@ void block_process(struct process* target){
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
-	struct process* head = target->next;
-	struct process* tail = target->prev;
+	if (emergency_process == target) emergency_process = 0;
 
-	head->prev = tail;
-	tail->next = head;
+	if (target->next == target){
+		active_process_circles[target->priority] = 0;
+		lookup_bitmap &= (~(1UL << target->priority));
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
 
-	if (target == active_process_list_head){
-		active_process_list_head = target->next;
+		head->prev = tail;
+		tail->next = head;
+
+		if (target == active_process_circles[target->priority]){
+			active_process_circles[target->priority] = target->next;
+		}
 	}
 
 	target->next = blocked_process_list_head;
@@ -361,18 +350,27 @@ void unblock_process(struct process* target){
 		struct process* head = target->next;
 		struct process* tail = target->prev;
 
-		head->prev = tail;
+		if (head != 0) head->prev = tail;
 		tail->next = head;
 	}
 	
-	target->next = active_process_list_head;
-	struct process* tail = active_process_list_head->prev;
-	target->prev = tail;
-	tail->next = target;
-	active_process_list_head->prev = target;
-	active_process_list_head = target;
-
-	_trigger_smode_software_interrupt();
+	if (lookup_bitmap & (1UL << target->priority)){
+		target->next = active_process_circles[target->priority];
+		struct process* tail = active_process_circles[target->priority]->prev;
+		target->prev = tail;
+		tail->next = target;
+		active_process_circles[target->priority]->prev = target;
+	} else {
+		target->next = target;
+		target->prev = target;	
+		active_process_circles[target->priority] = target;
+		lookup_bitmap |= (1UL << target->priority);
+	}
+	
+	if (target->priority < curr_process->priority){
+		curr_process->ticks_left = 0;
+		_trigger_smode_software_interrupt();
+	}
 
 	return;
 }
@@ -383,14 +381,21 @@ void exit_process(unsigned long code){
 
 	if(curr_process->magic != 0xC00C33E1) kpanic(114,curr_process->pid);
 
-	struct process* head = curr_process->next;
-	struct process* tail = curr_process->prev;
+	if (emergency_process == curr_process) emergency_process = 0;
 
-	head->prev = tail;
-	tail->next = head;
+	if (curr_process->next == curr_process){
+		active_process_circles[curr_process->priority] = 0;
+		lookup_bitmap &= (~(1UL << curr_process->priority));
+	} else {
+		struct process* head = curr_process->next;
+		struct process* tail = curr_process->prev;
 
-	if (curr_process == active_process_list_head){
-		active_process_list_head = curr_process->next;
+		head->prev = tail;
+		tail->next = head;
+
+		if (curr_process == active_process_circles[curr_process->priority]){
+			active_process_circles[curr_process->priority] = curr_process->next;
+		}
 	}
 
 	curr_process->next = zombie_process_list_head;
@@ -404,14 +409,25 @@ void exit_process(unsigned long code){
 	curr_process->state = 3;
 	curr_process->exit_code = code;
 
-	struct process* ptr = active_process_list_head;
+	struct process* ptr = 0;
 
-	do {
-		if (ptr->parent_pid == curr_process->pid){
-			ptr->parent_pid = 0;
+	for (int i = 0; i < 32; i++){
+
+		if (lookup_bitmap & (1UL << i)){
+
+			struct process* active_process_list_head = active_process_circles[i];
+
+			ptr = active_process_list_head;
+
+			do {
+				if (ptr->parent_pid == curr_process->pid){
+					ptr->parent_pid = 0;
+				}
+				ptr = ptr->next;
+			} while (ptr != active_process_list_head);
 		}
-		ptr = ptr->next;
-	} while (ptr != active_process_list_head);
+
+	}
 	
 	ptr = blocked_process_list_head;
 
@@ -484,7 +500,7 @@ unsigned long wait_process(void){
 		struct process* head = header->next;
 		struct process* tail = header->prev;
 
-		head->prev = tail;
+		if (head != 0) head->prev = tail;
 		tail->next = head;	
 	}
 	
@@ -548,14 +564,21 @@ void sleep_process (struct process* target, unsigned int ticks){
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
-	struct process* head = target->next;
-	struct process* tail = target->prev;
+	if (emergency_process == target) emergency_process = 0;
 
-	head->prev = tail;
-	tail->next = head;
+	if (target->next == target){
+		active_process_circles[target->priority] = 0;
+		lookup_bitmap &= (~(1UL << target->priority));
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
 
-	if (target == active_process_list_head){
-		active_process_list_head = target->next;
+		head->prev = tail;
+		tail->next = head;
+
+		if (target == active_process_circles[target->priority]){
+			active_process_circles[target->priority] = target->next;
+		}
 	}
 
 	target->next = sleeping_process_list_head;
@@ -582,14 +605,21 @@ void block_ipc_process(struct process* target){
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
-	struct process* head = target->next;
-	struct process* tail = target->prev;
+	if (emergency_process == target) emergency_process = 0;
 
-	head->prev = tail;
-	tail->next = head;
+	if (target->next == target){
+		active_process_circles[target->priority] = 0;
+		lookup_bitmap &= (~(1UL << target->priority));
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
 
-	if (target == active_process_list_head){
-		active_process_list_head = target->next;
+		head->prev = tail;
+		tail->next = head;
+
+		if (target == active_process_circles[target->priority]){
+			active_process_circles[target->priority] = target->next;
+		}
 	}
 
 	target->next = blocked_ipc_process_list_head;
@@ -624,18 +654,27 @@ void unblock_ipc_process(struct process* target){
 		struct process* head = target->next;
 		struct process* tail = target->prev;
 
-		head->prev = tail;
+		if (head != 0) head->prev = tail;
 		tail->next = head;
 	}
 	
-	target->next = active_process_list_head;
-	struct process* tail = active_process_list_head->prev;
-	target->prev = tail;
-	tail->next = target;
-	active_process_list_head->prev = target;
-	active_process_list_head = target;
+	if (lookup_bitmap & (1UL << target->priority)){
+		target->next = active_process_circles[target->priority];
+		struct process* tail = active_process_circles[target->priority]->prev;
+		target->prev = tail;
+		tail->next = target;
+		active_process_circles[target->priority]->prev = target;
+	} else {
+		target->next = target;
+		target->prev = target;	
+		active_process_circles[target->priority] = target;
+		lookup_bitmap |= (1UL << target->priority);
+	}
 
-	_trigger_smode_software_interrupt();
+	if (target->priority < curr_process->priority){
+		curr_process->ticks_left = 0;
+		_trigger_smode_software_interrupt();
+	}
 
 	return;
 }
@@ -646,14 +685,21 @@ void block_ipc_send_process(struct process* target){
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
-	struct process* head = target->next;
-	struct process* tail = target->prev;
+	if (emergency_process == target) emergency_process = 0;
 
-	head->prev = tail;
-	tail->next = head;
+	if (target->next == target){
+		active_process_circles[target->priority] = 0;
+		lookup_bitmap &= (~(1UL << target->priority));
+	} else {
+		struct process* head = target->next;
+		struct process* tail = target->prev;
 
-	if (target == active_process_list_head){
-		active_process_list_head = target->next;
+		head->prev = tail;
+		tail->next = head;
+
+		if (target == active_process_circles[target->priority]){
+			active_process_circles[target->priority] = target->next;
+		}
 	}
 
 	target->next = blocked_ipc_send_process_list_head;
@@ -688,18 +734,98 @@ void unblock_ipc_send_process(struct process* target){
 		struct process* head = target->next;
 		struct process* tail = target->prev;
 
-		head->prev = tail;
+		if (head != 0) head->prev = tail;
 		tail->next = head;
 	}
 	
-	target->next = active_process_list_head;
-	struct process* tail = active_process_list_head->prev;
-	target->prev = tail;
-	tail->next = target;
-	active_process_list_head->prev = target;
-	active_process_list_head = target;
+	if (lookup_bitmap & (1UL << target->priority)){
+		target->next = active_process_circles[target->priority];
+		struct process* tail = active_process_circles[target->priority]->prev;
+		target->prev = tail;
+		tail->next = target;
+		active_process_circles[target->priority]->prev = target;
+	} else {
+		target->next = target;
+		target->prev = target;	
+		active_process_circles[target->priority] = target;
+		lookup_bitmap |= (1UL << target->priority);
+	}
 
-	_trigger_smode_software_interrupt();
+	if (target->priority < curr_process->priority){
+		curr_process->ticks_left = 0;
+		_trigger_smode_software_interrupt();
+	}
 
+	return;
+}
+
+void update_sleep_list (void){
+	struct process* ptr = sleeping_process_list_head;
+
+	while (ptr != 0) {
+		struct process* next_ptr = ptr->next;
+
+		ptr->ticks_left--;
+
+		if (ptr->ticks_left == 0){
+
+			if(ptr->state != 4) kpanic(115,ptr->pid);
+
+			if(ptr->magic != 0xC00C33E1) kpanic(114,ptr->pid);
+
+			ptr->state = 0;
+
+			if (ptr == sleeping_process_list_head){
+				sleeping_process_list_head = ptr->next;
+
+				if (sleeping_process_list_head != 0) sleeping_process_list_head->prev = 0;
+
+			} else {
+				struct process* head = ptr->next;
+				struct process* tail = ptr->prev;
+
+				if (head != 0) head->prev = tail;
+				tail->next = head;
+			}
+	
+			if (lookup_bitmap & (1UL << ptr->priority)){
+				ptr->next = active_process_circles[ptr->priority];
+				struct process* tail = active_process_circles[ptr->priority]->prev;
+				ptr->prev = tail;
+				tail->next = ptr;
+				active_process_circles[ptr->priority]->prev = ptr;
+			} else {
+				ptr->next = ptr;
+				ptr->prev = ptr;	
+				active_process_circles[ptr->priority] = ptr;
+				lookup_bitmap |= (1UL << ptr->priority);
+			}
+
+			if (ptr->priority < curr_process->priority){
+				curr_process->ticks_left = 0;
+			}
+		}
+
+		ptr = next_ptr;
+	}
+}
+
+void anti_starvation_sweeper(void){
+	if ((lookup_bitmap >> 32) == 0) return;
+
+	for (int i = 30; i >= 0; i--){
+		
+		if (lookup_bitmap & (1UL << (i + 32))){
+			
+			if (lookup_bitmap & (1UL << i)){
+				emergency_process = active_process_circles[i];
+				break;
+			}
+		}
+
+	}
+
+	lookup_bitmap &= 0xFFFFFFFFUL;
+	
 	return;
 }
