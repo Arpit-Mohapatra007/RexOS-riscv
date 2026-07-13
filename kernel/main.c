@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "scheduler.h"
 #include "main.h"
+#include "smp.h"
 
 extern void _trigger_smode_software_interrupt(void);
 extern void _set_ssie(void);
@@ -18,16 +19,16 @@ extern void _wfi(void);
 extern void _load_umode_stvec(void);
 extern void _load_smode_stvec(void);
 extern void _flush_tlb(void);
+extern void _load_tp(unsigned long hart_runqueue_addr);
 
 extern char _binary_user_shell_elf_start[];
 extern char _binary_user_worker_elf_start[];
 
-extern struct process* curr_process;
 extern unsigned long* root_table;
+struct cpu_closet* global_closet;
 
 struct process* shell_ptr = 0;
 unsigned long irq_registry[64] = {0};
-unsigned long starv_ticks = 0;
 volatile unsigned char uart_buff = 0x00;
 
 void print_banner(void) { 
@@ -252,50 +253,50 @@ void strap_router(unsigned long scause, unsigned long stval){
 	if (((scause >> 63) & 0x1) && error_code == 1){
 		_off_sip();
 
-		curr_process->cpu_time++;
+		(get_runqueue()->curr_process)->cpu_time++;
 		
-		if (curr_process->ticks_left > 0) curr_process->ticks_left--;
+		if ((get_runqueue()->curr_process)->ticks_left > 0) (get_runqueue()->curr_process)->ticks_left--;
 
 		update_sleep_list();
-		starv_ticks++;
+		(get_runqueue()->starv_ticks)++;
 		
-		if (starv_ticks == 1000){
+		if ((get_runqueue()->starv_ticks) == 1000){
 			anti_starvation_sweeper();
-			starv_ticks = 0;
+			(get_runqueue()->starv_ticks) = 0;
 		}
 
-		if (curr_process->ticks_left == 0 || curr_process->state != 1){
+		if ((get_runqueue()->curr_process)->ticks_left == 0 || (get_runqueue()->curr_process)->state != 1){
 			schedule();
 		}
 
-	    if (curr_process->tf != 0 && (curr_process->tf->sstatus & 0x100) == 0){
+	    if ((get_runqueue()->curr_process)->tf != 0 && ((get_runqueue()->curr_process)->tf->sstatus & 0x100) == 0){
 			_load_umode_stvec();
 	    } else {
 			_load_smode_stvec();
 	    } 
 
 	} else if ( !((scause >> 63) & 0x1) && error_code == 8){
-		curr_process->tf->epc += 4;
+		(get_runqueue()->curr_process)->tf->epc += 4;
 		
 
-		unsigned long a7 = curr_process->tf->u_context[17];
-		unsigned long a0 = curr_process->tf->u_context[10];
-		unsigned long a1 = curr_process->tf->u_context[11];
-		unsigned long a2 = curr_process->tf->u_context[12];
-		unsigned long a3 = curr_process->tf->u_context[13];
-		unsigned long a4 = curr_process->tf->u_context[14];
-		unsigned long a5 = curr_process->tf->u_context[15];
-		unsigned long a6 = curr_process->tf->u_context[16];
+		unsigned long a7 = (get_runqueue()->curr_process)->tf->u_context[17];
+		unsigned long a0 = (get_runqueue()->curr_process)->tf->u_context[10];
+		unsigned long a1 = (get_runqueue()->curr_process)->tf->u_context[11];
+		unsigned long a2 = (get_runqueue()->curr_process)->tf->u_context[12];
+		unsigned long a3 = (get_runqueue()->curr_process)->tf->u_context[13];
+		unsigned long a4 = (get_runqueue()->curr_process)->tf->u_context[14];
+		unsigned long a5 = (get_runqueue()->curr_process)->tf->u_context[15];
+		unsigned long a6 = (get_runqueue()->curr_process)->tf->u_context[16];
 
 		switch(a7) {
 			case 1:	
 				uart_putc((unsigned char) a0);
 				break;
 			case 2:
-				shell_ptr = curr_process;
+				shell_ptr = (get_runqueue()->curr_process);
 				
 				if (uart_buff != 0x00){
-					curr_process->tf->u_context[10] = (unsigned long) uart_buff;
+					(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long) uart_buff;
 					uart_buff = 0x00;
 				} else {
 					block_process(shell_ptr);
@@ -306,26 +307,26 @@ void strap_router(unsigned long scause, unsigned long stval){
 				exit_process(a0);
 				break;
 			case 4:
-				curr_process->tf->u_context[10] = curr_process->pid;
+				(get_runqueue()->curr_process)->tf->u_context[10] = (get_runqueue()->curr_process)->pid;
 				break;
 			case 5:
-				curr_process->state = 0;
+				(get_runqueue()->curr_process)->state = 0;
 				_trigger_smode_software_interrupt();
 				break;
 			case 6:
-				sleep_process(curr_process, (unsigned int)a0);
+				sleep_process((get_runqueue()->curr_process), (unsigned int)a0);
 				break;
 			case 7:
-				curr_process->tf->u_context[10] = wait_process();
+				(get_runqueue()->curr_process)->tf->u_context[10] = wait_process();
 				break;
 			case 8: {
-					unsigned long phys_addr = uvm_translate(curr_process->satp, a1);
+					unsigned long phys_addr = uvm_translate((get_runqueue()->curr_process)->satp, a1);
 
 					if (phys_addr == 0){
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
 						exit_process(-1);
@@ -337,8 +338,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -396,11 +397,11 @@ void strap_router(unsigned long scause, unsigned long stval){
 						unsigned int idx = target->pid / 16;
 						unsigned int offset = ((target->pid % 16) * 4);
 
-						if (!(curr_process->capability_root[idx] & (15UL << offset))) {
+						if (!((get_runqueue()->curr_process)->capability_root[idx] & (15UL << offset))) {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Access Denied to send message to - ");
 							uart_puth(target->pid);
@@ -410,15 +411,15 @@ void strap_router(unsigned long scause, unsigned long stval){
 							uart_puts(")");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 						
-						if (!(curr_process->capability_root[idx] & (2UL << offset))) {
+						if (!((get_runqueue()->curr_process)->capability_root[idx] & (2UL << offset))) {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Write Rights Denied to - ");
 							uart_puth(target->pid);
@@ -428,12 +429,12 @@ void strap_router(unsigned long scause, unsigned long stval){
 							uart_puts(")");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 
-						idx = curr_process->pid / 16;
-						offset = ((curr_process->pid % 16)* 4);
+						idx = (get_runqueue()->curr_process)->pid / 16;
+						offset = (((get_runqueue()->curr_process)->pid % 16)* 4);
 
 						if (!(target->capability_root[idx] & (1UL << offset))) {
 							uart_puts("\n [RexOS] Process ");
@@ -442,14 +443,14 @@ void strap_router(unsigned long scause, unsigned long stval){
 							uart_puts((char*)target->name);
 							uart_puts("] ");
 							uart_puts("(Read Rights Denied to - ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts(")");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 
@@ -459,54 +460,54 @@ void strap_router(unsigned long scause, unsigned long stval){
 								*(((unsigned long*)(&target->mailbox)) + i) = *(((unsigned long*)phys_addr) + i);
 							}
 
-							target->mailbox.sender_pid = curr_process->pid;
+							target->mailbox.sender_pid = (get_runqueue()->curr_process)->pid;
 
 							if (target->state == 5) unblock_ipc_process(target);
 
 							target->mailbox_status = 1;
 
-							curr_process->tf->u_context[10] = 1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = 1;
 
 						} else {
-							curr_process->tf->epc -= 4;
-							curr_process->ipc_pending_pid = target->pid;
-							block_ipc_send_process(curr_process);	
+							(get_runqueue()->curr_process)->tf->epc -= 4;
+							(get_runqueue()->curr_process)->ipc_pending_pid = target->pid;
+							block_ipc_send_process((get_runqueue()->curr_process));	
 						}
 					} else {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					}
 
 					break;
 				}
 			case 9: {
-					unsigned long phys_addr = uvm_translate(curr_process->satp, a0);
+					unsigned long phys_addr = uvm_translate((get_runqueue()->curr_process)->satp, a0);
 
 					if (phys_addr == 0){
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
 						exit_process(-1);
 						break;
 					}
 				
-					if (curr_process->mailbox_status == 0){
-						block_ipc_process(curr_process);
+					if ((get_runqueue()->curr_process)->mailbox_status == 0){
+						block_ipc_process((get_runqueue()->curr_process));
 					} else {
 						for (int i = 0; i < (sizeof(struct ipc_msg) / 8); i++){
-							*(((unsigned long*)phys_addr) + i) = *(((unsigned long*)(&curr_process->mailbox)) + i);
+							*(((unsigned long*)phys_addr) + i) = *(((unsigned long*)(&(get_runqueue()->curr_process)->mailbox)) + i);
 						}
 					
-						curr_process->mailbox_status = 0;
-						curr_process->tf->u_context[10] = 1;
+						(get_runqueue()->curr_process)->mailbox_status = 0;
+						(get_runqueue()->curr_process)->tf->u_context[10] = 1;
 						
 						struct process* ptr = blocked_ipc_send_process_list_head;
 						while (ptr != 0){
 							struct process* next_ptr = ptr->next;
 
-							if (ptr->ipc_pending_pid == curr_process->pid) unblock_ipc_send_process(ptr);
+							if (ptr->ipc_pending_pid == (get_runqueue()->curr_process)->pid) unblock_ipc_send_process(ptr);
 
 							ptr = next_ptr;
 						}
@@ -521,8 +522,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -579,47 +580,47 @@ void strap_router(unsigned long scause, unsigned long stval){
 						unsigned int idx = a1 / 16;
 						unsigned int offset = ((a1 % 16) * 4);
 
-						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+						unsigned long rights = (((get_runqueue()->curr_process)->capability_root[idx] >> offset) & 15UL );
 
 						if ( !(rights & 4UL) ) {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Don't have right to grant )");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 
 						if ((rights & (a2 & 15UL)) != (a2 & 15UL)){
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Can't grant unpossessed rights )");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 	
 						}
 
-						if ((rights & 8UL) || curr_process->pid == 1) {
+						if ((rights & 8UL) || (get_runqueue()->curr_process)->pid == 1) {
 						
 							target->capability_root[idx] = (target->capability_root[idx] & (~(15UL << offset))) | ((a2 & 15UL ) << offset);
-							curr_process->tf->u_context[10] = (unsigned long)1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 							break;
 						}
 
 						int auth = 0;
 
-						for (int i = 0; i < curr_process->active_grant; i++){
+						for (int i = 0; i < (get_runqueue()->curr_process)->active_grant; i++){
 
-							if (curr_process->grant_whitelist[i] == a0){
+							if ((get_runqueue()->curr_process)->grant_whitelist[i] == a0){
 								auth = 1;
 								break;
 							}
@@ -628,24 +629,24 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 						if (auth){
 							target->capability_root[idx] = (target->capability_root[idx] & (~(15UL << offset))) | ((a2 & 15UL ) << offset);
-							curr_process->tf->u_context[10] = (unsigned long)1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 						} else {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(This PID is not in whitelist : ");
 							uart_puth(a0);
 							uart_puts(")");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 						}
 							break;
 	
 					} else {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					}
 
 					break;
@@ -658,8 +659,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -716,42 +717,42 @@ void strap_router(unsigned long scause, unsigned long stval){
 						unsigned int idx = a1 / 16;
 						unsigned int offset = ((a1 % 16) * 4);
 						
-						if (target->parent_pid != curr_process->pid && curr_process->pid != 1){
+						if (target->parent_pid != (get_runqueue()->curr_process)->pid && (get_runqueue()->curr_process)->pid != 1){
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Permission denied to revoke permission as PID: ");
 							uart_puth(a0);
 							uart_puts("is not its child )");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 
 						target->capability_root[idx] &= (~(15UL << offset));
-						curr_process->tf->u_context[10] = (unsigned long)1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 					} else {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					}
 
 					break;
 				}
 
 			case 12:
-				curr_process->tf->u_context[10] = alive_thread_counter;
+				(get_runqueue()->curr_process)->tf->u_context[10] = alive_thread_counter;
 				break;
 
 			case 13:{
-					unsigned long phys_addr = uvm_translate(curr_process->satp, a0);
+					unsigned long phys_addr = uvm_translate((get_runqueue()->curr_process)->satp, a0);
 
 					if (phys_addr == 0){
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
 						exit_process(-1);
@@ -763,12 +764,12 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 					if (target_idx <= 0) {
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts(" ( Count of Processes to be listed must be positive )\n");
-						curr_process->tf->u_context[10] = -1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = -1;
 						break;	
 					}
 					
@@ -778,8 +779,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -866,7 +867,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 						idx++;
 					}
 
-					curr_process->tf->u_context[10] = idx;
+					(get_runqueue()->curr_process)->tf->u_context[10] = idx;
 					break;
 				}
 				
@@ -878,33 +879,33 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 					int present = 0;
 
-					for (int i = 0; i < curr_process->active_grant; i++){
-						if (curr_process->grant_whitelist[i] == a0){
+					for (int i = 0; i < (get_runqueue()->curr_process)->active_grant; i++){
+						if ((get_runqueue()->curr_process)->grant_whitelist[i] == a0){
 							present = 1;
 							break;
 						}
 					}
 
 					if (present){
-						curr_process->tf->u_context[10] = 1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = 1;
 						break;
 					} else {
-						if (curr_process->active_grant == 8){
+						if ((get_runqueue()->curr_process)->active_grant == 8){
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Whitelist if already full)");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 	
 						} else {
-							curr_process->grant_whitelist[curr_process->active_grant] = a0;
-							curr_process->active_grant++;
-							curr_process->tf->u_context[10] = (unsigned long)1;
+							(get_runqueue()->curr_process)->grant_whitelist[(get_runqueue()->curr_process)->active_grant] = a0;
+							(get_runqueue()->curr_process)->active_grant++;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 							break;
 						}	
 					}					
@@ -914,8 +915,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 					int present = 0;
 					int idx = 0;
 
-					for (int i = 0; i < curr_process->active_grant; i++){
-						if (curr_process->grant_whitelist[i] == a0){
+					for (int i = 0; i < (get_runqueue()->curr_process)->active_grant; i++){
+						if ((get_runqueue()->curr_process)->grant_whitelist[i] == a0){
 							present = 1;
 							idx = i;
 							break;
@@ -923,38 +924,38 @@ void strap_router(unsigned long scause, unsigned long stval){
 					}
 
 					if (!present){
-						curr_process->tf->u_context[10] = 1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = 1;
 						break;
 					} else {
-						curr_process->grant_whitelist[idx] = curr_process->grant_whitelist[curr_process->active_grant - 1];
-						curr_process->grant_whitelist[curr_process->active_grant - 1] = 0;	
-							curr_process->active_grant--;
-							curr_process->tf->u_context[10] = (unsigned long)1;
+						(get_runqueue()->curr_process)->grant_whitelist[idx] = (get_runqueue()->curr_process)->grant_whitelist[(get_runqueue()->curr_process)->active_grant - 1];
+						(get_runqueue()->curr_process)->grant_whitelist[(get_runqueue()->curr_process)->active_grant - 1] = 0;	
+							(get_runqueue()->curr_process)->active_grant--;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 							break;
 						}	
 					}
 
 				default:
 					uart_puts("\n [RexOS] Process ");
-					uart_puth(curr_process->pid);
+					uart_puth((get_runqueue()->curr_process)->pid);
 					uart_puts(" [");
-					uart_puts((char*)curr_process->name);
+					uart_puts((char*)(get_runqueue()->curr_process)->name);
 					uart_puts("] ");
 					uart_puts("(Unrecognized syscall argument.)");
 					uart_putc('\n');
-					curr_process->tf->u_context[10] = (unsigned long)-1;
+					(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					break;
 				}
 				break;
 
 			case 15:{
-					unsigned long phys_addr = uvm_translate(curr_process->satp, a1);
+					unsigned long phys_addr = uvm_translate((get_runqueue()->curr_process)->satp, a1);
 
 					if (phys_addr == 0){
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts(" terminated (Segmentation Fault - Bad Syscall Pointer)\n");
 						exit_process(-1);
@@ -967,8 +968,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -1025,27 +1026,27 @@ void strap_router(unsigned long scause, unsigned long stval){
 						unsigned int idx = target->pid / 16;
 						unsigned int offset = ((target->pid % 16) * 4);
 
-						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+						unsigned long rights = (((get_runqueue()->curr_process)->capability_root[idx] >> offset) & 15UL );
 
-						if ( !(rights & 4UL) && (curr_process->pid != target->pid)) {
+						if ( !(rights & 4UL) && ((get_runqueue()->curr_process)->pid != target->pid)) {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Don't have right to grant )");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 	
 						uvm_map((unsigned long*)((target->satp & 0xFFFFFFFFFFF) << 12), a2, phys_addr, 4096, a3);
 						_flush_tlb();
-						curr_process->tf->u_context[10] = (unsigned long)1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 
 					} else {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					}
 
 					break;
@@ -1058,8 +1059,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 
 					for (int i = 0; i < 32; i++){
 
-						if (lookup_bitmap & (1UL << i)){
-							struct process* active_process_list_head = active_process_circles[i];
+						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 							ptr = active_process_list_head;
 
 							do {
@@ -1117,65 +1118,65 @@ void strap_router(unsigned long scause, unsigned long stval){
 						unsigned int idx = target->pid / 16;
 						unsigned int offset = ((target->pid % 16) * 4);
 
-						unsigned long rights = ((curr_process->capability_root[idx] >> offset) & 15UL );
+						unsigned long rights = (((get_runqueue()->curr_process)->capability_root[idx] >> offset) & 15UL );
 
-						if ( !(rights & 4UL) && (curr_process->pid != target->pid) ) {
+						if ( !(rights & 4UL) && ((get_runqueue()->curr_process)->pid != target->pid) ) {
 							uart_puts("\n [RexOS] Process ");
-							uart_puth(curr_process->pid);
+							uart_puth((get_runqueue()->curr_process)->pid);
 							uart_puts(" [");
-							uart_puts((char*)curr_process->name);
+							uart_puts((char*)(get_runqueue()->curr_process)->name);
 							uart_puts("] ");
 							uart_puts("(Don't have right to grant )");
 							uart_putc('\n');
 
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 							break;
 						}
 
 
 						if (uvm_unmap(target->satp, a1)){
 							_flush_tlb();
-							curr_process->tf->u_context[10] = (unsigned long)1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 						} else {
-							curr_process->tf->u_context[10] = (unsigned long)-1;
+							(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 						}
 
 					} else {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 					}
 
 					break;	
 				}
 
 			case 17:{
-					if (curr_process->pid != 1) {
+					if ((get_runqueue()->curr_process)->pid != 1) {
 						uart_puts("\n [RexOS] Process ");
-						uart_puth(curr_process->pid);
+						uart_puth((get_runqueue()->curr_process)->pid);
 						uart_puts(" [");
-						uart_puts((char*)curr_process->name);
+						uart_puts((char*)(get_runqueue()->curr_process)->name);
 						uart_puts("] ");
 						uart_puts("(Hardware Claim Denied: Requires PID 1)\n");
 
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 						break;
 					}
 
 					if (a0 >= 64) {
-						curr_process->tf->u_context[10] = (unsigned long)-1;
+						(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)-1;
 						break;
 					}
 
-					irq_registry[a0] = curr_process->pid;
+					irq_registry[a0] = (get_runqueue()->curr_process)->pid;
 
-					curr_process->tf->u_context[10] = (unsigned long)1;
+					(get_runqueue()->curr_process)->tf->u_context[10] = (unsigned long)1;
 					break;
 				}
 
 			case 18:
-				if (uvm_translate(curr_process->satp, a0)){
-					curr_process->tf->u_context[10] = 1;
+				if (uvm_translate((get_runqueue()->curr_process)->satp, a0)){
+					(get_runqueue()->curr_process)->tf->u_context[10] = 1;
 				}else{
-					curr_process->tf->u_context[10] = 0;
+					(get_runqueue()->curr_process)->tf->u_context[10] = 0;
 				}
 
 				break;
@@ -1201,7 +1202,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 		kpanic(scause,stval);
 	}
 
-	if (curr_process->tf != 0) _load_sscratch((unsigned long)curr_process->tf);
+	if ((get_runqueue()->curr_process)->tf != 0) _load_sscratch((unsigned long)(get_runqueue()->curr_process)->tf);
 
 	return;	
 }
@@ -1225,6 +1226,18 @@ void kmain(void) {
 	kvm_init();
 	dtb_parser_time();
 	dtb_parser_context();
+	dtb_parser_hart();
+
+	struct hart_runqueue* core0_hart_runqueue = (struct hart_runqueue*)kvmalloc(sizeof(struct hart_runqueue));
+
+	unsigned char* ptr = (unsigned char*)core0_hart_runqueue;
+	
+	for (int i = 0; i < sizeof(struct hart_runqueue) ; i++){
+		*(ptr + i) = 0;
+	}
+	
+	_load_tp((unsigned long)core0_hart_runqueue);
+	
 	scheduler_init();
 	timer_init();
 	plic_init();
@@ -1235,5 +1248,18 @@ void kmain(void) {
 	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32, 16);
 	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
 	
+	global_closet = (struct cpu_closet*)kvmalloc((hart * sizeof(struct cpu_closet)));
+
+	for (unsigned long i = 1; i < hart; i++){
+		global_closet[i]._mmode_stack = (unsigned long*)((char*)kalloc(0) + 4096);
+		global_closet[i]._smode_stack = (unsigned long*)((char*)kalloc(0) + 4096);
+		global_closet[i].flag = 0;
+	}
+
+	for (unsigned long i = 1; i < hart; i++){
+		global_closet[i].flag = 1;
+		*(volatile unsigned int*)(CLINT_BASE + (i * 4)) = 1;
+	}
+
 	oxomoco_loop();
 }

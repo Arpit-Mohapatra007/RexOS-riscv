@@ -20,6 +20,8 @@ extern void* _dtb_ptr;
 struct ram_meta ram;
 unsigned long timebase_freq = 0;
 unsigned int context_idx = 0;
+unsigned long hart = 0;
+
 unsigned int kswap_endian(unsigned int input_endian){
 	unsigned int output_endian = 0;
 	for ( int i = 0; i < 4; i++ ){
@@ -195,3 +197,52 @@ void dtb_parser_context(void){
 	}
 	return;
 }
+
+void dtb_parser_hart(void){
+struct fdtb_header *fdt;
+	fdt = _dtb_ptr;
+	if ( kswap_endian(fdt->magic) == 0xD00DFEED ){
+		unsigned int* parser_ptr_struct = (unsigned int*)( (char*)_dtb_ptr + kswap_endian(fdt->off_dt_struct)	);
+		unsigned char* parser_ptr_strings = (unsigned char*)( (char*)_dtb_ptr + kswap_endian(fdt->off_dt_strings) );
+		
+		int cpus_depth = 0;
+
+		unsigned int* end_dtb = (unsigned int*)( (char*)_dtb_ptr + kswap_endian(fdt->totalsize) );
+		unsigned int* end_tk_ptr = parser_ptr_struct + ( kswap_endian(fdt->size_dt_struct)/4 );
+
+		while(parser_ptr_struct < end_tk_ptr && parser_ptr_struct < end_dtb){
+			unsigned int token = kswap_endian(*parser_ptr_struct);
+			parser_ptr_struct++;
+			switch(token){
+				case 0x00000001:
+					if( kstr_has_prefix( "cpus",(char*)parser_ptr_struct ) ){
+						cpus_depth = 1;
+					} else if (cpus_depth > 0){
+						
+						if ( kstr_has_prefix("cpu@", (char*)parser_ptr_struct) ) hart++;
+
+						cpus_depth++;
+					}
+
+					parser_ptr_struct += ( ( ( kstrlen( (char*)parser_ptr_struct ) + 1 + 3 ) & ( ~3 ) )/4 );
+					break;
+
+				case 0x00000002:
+					if (cpus_depth > 0) cpus_depth--;
+					break;
+
+				case 0x00000003: {
+					unsigned int prop_len = kswap_endian(parser_ptr_struct[0]);
+					parser_ptr_struct += 2;
+					parser_ptr_struct += ( ( ( prop_len + 3 ) & ( ~3 ) )/4 );
+					break;
+				}
+
+				default:
+					break;
+			}
+		}
+	}	
+	return;
+}
+

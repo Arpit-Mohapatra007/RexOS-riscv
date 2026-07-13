@@ -15,6 +15,7 @@ struct trapframe{
 	unsigned long kernel_sp;
 	unsigned long kernel_trap;
 	unsigned long user_satp;
+	unsigned long kernel_tp;
 };
 
 struct process_info{
@@ -61,15 +62,11 @@ struct process{
 
 extern void _load_sscratch(unsigned long curr_process_addr);
 
-extern struct process* curr_process;
-extern struct process* active_process_circles[32];
-extern unsigned long lookup_bitmap;
 extern struct process* blocked_process_list_head;
 extern struct process* zombie_process_list_head;
 extern struct process* sleeping_process_list_head;
 extern struct process* blocked_ipc_process_list_head;
 extern struct process* blocked_ipc_send_process_list_head;
-extern struct process* idle_process;
 
 extern unsigned long alive_thread_counter;
 extern unsigned long* pid_registry;

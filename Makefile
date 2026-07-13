@@ -12,6 +12,7 @@ CFLAGS = -nostdlib \
 	 -mabi=lp64d \
 	 -fno-builtin \
 	 -ffreestanding \
+	 -ffixed-tp \
 	 -mcmodel=medany \
 	 -msmall-data-limit=0 \
 	 -Wextra \
@@ -36,6 +37,8 @@ SRCS = kernel/start.S \
        kernel/timer.S \
        kernel/scheduler.c \
        kernel/scheduler.S \
+       kernel/smp.c \
+       kernel/smp.S \
        kernel/main.c \
        user/shell_payload.o \
        user/worker_payload.o

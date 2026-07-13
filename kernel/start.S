@@ -6,6 +6,9 @@
 .global _load_umode_stvec
 .global _load_smode_stvec
 .global _process_bootstrap
+.global _load_tp
+
+.extern global_closet
 
 _start:
 	csrr a0, mhartid
@@ -66,7 +69,70 @@ _done:
 
 _hart_park:
 	wfi
-	j _hart_park
+
+_smp_awakening_sequence:
+	csrr t0, mhartid
+	li t1, 24
+	mul t0, t0, t1
+	la t2, global_closet
+	ld t2, 0(t2)
+	add t2, t2, t0
+
+	ld t1, 16(t2)
+	beqz t1, _smp_awakening_sequence
+
+	ld t1, 0(t2)
+	csrw mscratch, t1
+
+	ld sp, 8(t2)
+
+	la t1, root_table
+	ld t1, 0(t1)
+	li t0, 0x8000000000000000
+	srli t1, t1, 12
+	or t0, t0, t1
+	csrw satp, t0
+	sfence.vma
+	
+	li t0, -1
+	csrw pmpaddr0, t0
+	li t0, 0x1F
+	csrw pmpcfg0, t0
+
+	li t0, -1
+	csrw medeleg, t0
+	csrw mideleg, t0	
+
+	li t0, 0x1800
+	csrc mstatus, t0
+	li t0, 0x0800
+	csrs mstatus, t0
+
+	la t0, 0x02004000
+	csrr t2, mhartid
+	li t1, 8
+	mul t2, t2, t1
+	add t0, t0, t2
+	li t1, -1
+	sd t1, 0(t0)
+
+	li t0, 128
+	csrs mie, t0
+
+	li t0, 32
+	csrs mstatus, t0
+
+	la t1, smp_kmain
+	csrw mepc, t1
+
+	csrr t0, mhartid
+	li t1, 4
+	mul t0, t0, t1
+	li t1, 0x02000000
+	add t1, t1, t0
+	sw x0, 0(t1)
+
+	mret
 
 .align 2
 _mmode_trap_handler:
@@ -267,6 +333,7 @@ _user_trampoline:
 	ld t0, 272(sp)
 	ld t1, 280(sp)
 	ld t2, 288(sp)
+	ld tp, 304(sp)
 	csrw satp, t0
 	sfence.vma
 	csrw sscratch, sp
@@ -285,7 +352,7 @@ _restore_state:
 	ld t0, 256(sp)
 	csrw sepc, t0
 	ld t0, 296(sp)
-	li t1, 0x3FFFFFEED0
+	li t1, 0x3FFFFFEEC8
 	csrw satp, t0
 	sfence.vma
 	mv sp, t1
@@ -331,6 +398,10 @@ _process_bootstrap:
 	li t0, 0x3FFFFFF000
 	add t0, t0, t1
 	jr t0
+
+_load_tp:
+	mv tp, a0
+	ret
 
 _load_umode_stvec:
 	li t0, 0x3FFFFFF000

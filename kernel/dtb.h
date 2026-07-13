@@ -9,10 +9,12 @@ struct ram_meta {
 extern struct ram_meta ram;
 extern unsigned long timebase_freq;
 extern unsigned int context_idx;
+extern unsigned long hart;
 
 unsigned int kswap_endian(unsigned int input_endian);
 void dtb_parser_ram(void);
 void dtb_parser_time(void);
 void dtb_parser_context(void);
+void dtb_parser_hart(void);
 
 #endif
