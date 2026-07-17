@@ -1,6 +1,7 @@
 #include "kalloc.h"
 #include "dtb.h"
 #include "main.h"
+#include "smp.h"
 
 #define MAX_ORDER 12
 
@@ -58,7 +59,7 @@ void kalloc_init(void){
 }
 
 void* kalloc(unsigned int order){
-	
+	spinlock_acquire(&kalloc_lock);	
 	if ( order >= MAX_ORDER ) kpanic(100,(unsigned long)order);
 
 	unsigned int curr_order = order;
@@ -101,11 +102,12 @@ void* kalloc(unsigned int order){
 	page_array[idx].alloc_caller = __builtin_return_address(0);
 
 	unsigned long phys_addr = ram.ram_base_addr + ( idx * 4096 );
+	spinlock_release(&kalloc_lock);
 	return (void*) phys_addr;
 }
 
 void kfree(void* phys_addr){
-	
+	spinlock_acquire(&kalloc_lock);
 	if ( ( (unsigned long)phys_addr & 0xFFF ) != 0 ) kpanic(104, (unsigned long)phys_addr);
 
 	unsigned long idx = ( (unsigned long)phys_addr - ram.ram_base_addr ) / 4096;
@@ -156,6 +158,6 @@ void kfree(void* phys_addr){
 	free_lists[order] = idx;
 	page_array[idx].prev_idx = 0xFFFFFFFF;
 	page_array[idx].alloc_caller = 0;
-
+	spinlock_release(&kalloc_lock);
 	return;
 }

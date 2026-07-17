@@ -30,6 +30,7 @@ struct cpu_closet* global_closet;
 struct process* shell_ptr = 0;
 unsigned long irq_registry[64] = {0};
 volatile unsigned char uart_buff = 0x00;
+unsigned int smp_ready = 0;
 
 void print_banner(void) { 
 	uart_puts("\033[38;5;82;48;5;236m");
@@ -235,11 +236,84 @@ void kpanic(unsigned long mcause, unsigned long mepc) {
 	while(1);
 }
 
-void mtrap_router(unsigned long mcause, unsigned long mepc){
+struct process* get_process_by_pid(unsigned long pid){
+	struct process* target = 0;
+	struct process* ptr = 0;	
+	
+	for (int j = 0; j < hart; j++){
+		if (!global_closet[j].rq) continue;
+		spinlock_acquire(&(global_closet[j].rq->lock));
+		for (int i = 0; i < 32; i++){
+
+			if ((global_closet[j].rq->lookup_bitmap) & (1UL << i)){
+				struct process* active_process_list_head = (global_closet[j].rq->active_process_circles)[i];
+				ptr = active_process_list_head;
+
+				do {
+					if ( ptr->pid == pid ){
+						target = ptr;
+					}
+			
+					ptr = ptr->next;
+				} while (ptr != active_process_list_head && target == 0);
+			}
+		}
+		spinlock_release(&(global_closet[j].rq->lock));
+		if (target != 0) break;
+	}
+	spinlock_acquire(&blocked_list_lock);
+	ptr = blocked_process_list_head;
+
+	while (ptr != 0 && target == 0){
+		if ( ptr->pid == pid){
+			target = ptr;
+		}
+
+		ptr = ptr->next;
+	}
+	spinlock_release(&blocked_list_lock);
+	spinlock_acquire(&blocked_ipc_list_lock);
+	ptr = blocked_ipc_process_list_head;
+
+	while (ptr != 0 && target == 0){
+		if ( ptr->pid == pid){
+			target = ptr;
+		}
+
+		ptr = ptr->next;
+	}
+	spinlock_release(&blocked_ipc_list_lock);
+	spinlock_acquire(&blocked_ipc_send_list_lock);
+	ptr = blocked_ipc_send_process_list_head;
+
+	while (ptr != 0 && target == 0){
+		if ( ptr->pid == pid){
+			target = ptr;
+		}
+
+		ptr = ptr->next;
+	}
+	spinlock_release(&blocked_ipc_send_list_lock);	
+	spinlock_acquire(&sleeping_list_lock);
+	ptr = sleeping_process_list_head;
+
+	while (ptr != 0 && target == 0){
+		if ( ptr->pid == pid){
+			target = ptr;
+		}
+
+		ptr = ptr->next;
+	}
+	spinlock_release(&sleeping_list_lock);
+	return target;
+
+}
+
+void mtrap_router(unsigned long mcause, unsigned long mepc, unsigned long mhartid){
 	unsigned long error_code = ( mcause & 0x7FFFFFFFFFFFFFFFUL );
 
 	if (((mcause >> 63) & 0x1) && error_code == 7){
-		update_timer();
+		update_timer(mhartid);
 		_trigger_smode_software_interrupt();
 	} else {
 		kpanic(mcause,mepc);
@@ -333,65 +407,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 						break;
 					}
 
-					struct process* target = 0;
-					struct process* ptr = 0;	
-					
-					for (int i = 0; i < 32; i++){
-
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
-
-							do {
-								if ( ptr->pid == a0 ){
-									target = ptr;
-								}
-			
-								ptr = ptr->next;
-							} while (ptr != active_process_list_head && target == 0);
-						}
-					}
-
-					ptr = blocked_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_send_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
-					ptr = sleeping_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
+					struct process* target = get_process_by_pid(a0);					
 					if (target != 0){
 						
 						unsigned int idx = target->pid / 16;
@@ -502,80 +518,33 @@ void strap_router(unsigned long scause, unsigned long stval){
 					
 						(get_runqueue()->curr_process)->mailbox_status = 0;
 						(get_runqueue()->curr_process)->tf->u_context[10] = 1;
-						
-						struct process* ptr = blocked_ipc_send_process_list_head;
-						while (ptr != 0){
-							struct process* next_ptr = ptr->next;
+						int pending_senders = 1;
 
-							if (ptr->ipc_pending_pid == (get_runqueue()->curr_process)->pid) unblock_ipc_send_process(ptr);
+						while(pending_senders){
+							pending_senders = 0;
+							spinlock_acquire(&blocked_ipc_send_list_lock);
+							struct process* ptr = blocked_ipc_send_process_list_head;
+							while (ptr != 0){
+								struct process* next_ptr = ptr->next;
 
-							ptr = next_ptr;
+								if (ptr->ipc_pending_pid == (get_runqueue()->curr_process)->pid){
+									spinlock_release(&blocked_ipc_send_list_lock);
+									unblock_ipc_send_process(ptr);
+									pending_senders = 1;
+									break;
+								}
+
+								ptr = next_ptr;
+							}
+							
+							if (!pending_senders) spinlock_release(&blocked_ipc_send_list_lock);
 						}
 					}
 
 					break;
 				}
 			case 10:{
-					struct process* target = 0;
-
-					struct process* ptr = 0;
-					
-					for (int i = 0; i < 32; i++){
-
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
-
-							do {
-								if ( ptr->pid == a0 ){
-									target = ptr;
-								}
-			
-								ptr = ptr->next;
-							} while (ptr != active_process_list_head && target == 0);
-						}
-					}
-
-					ptr = blocked_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_send_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
-					ptr = sleeping_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
+					struct process* target = get_process_by_pid(a0);					
 					if (target != 0){
 						unsigned int idx = a1 / 16;
 						unsigned int offset = ((a1 % 16) * 4);
@@ -653,66 +622,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 				}
 
 			case 11:{
-					struct process* target = 0;
-
-					struct process* ptr = 0;
-					
-					for (int i = 0; i < 32; i++){
-
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
-
-							do {
-								if ( ptr->pid == a0 ){
-									target = ptr;
-								}
-			
-								ptr = ptr->next;
-							} while (ptr != active_process_list_head && target == 0);
-						}
-					}
-
-					ptr = blocked_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_send_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
-					ptr = sleeping_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
+					struct process* target = get_process_by_pid(a0);					
 					if (target != 0){
 						unsigned int idx = a1 / 16;
 						unsigned int offset = ((a1 % 16) * 4);
@@ -776,27 +686,34 @@ void strap_router(unsigned long scause, unsigned long stval){
 					struct process_info* pif = (struct process_info*) phys_addr;
 
 					struct process* ptr = 0;
+					
+					for (int j = 0; j < hart; j++){
+						if (!global_closet[j].rq) continue;
+						spinlock_acquire(&(global_closet[j].rq->lock));
+						for (int i = 0; i < 32; i++){
 
-					for (int i = 0; i < 32; i++){
+							if ((global_closet[j].rq->lookup_bitmap) & (1UL << i)){
+								struct process* active_process_list_head = (global_closet[j].rq->active_process_circles)[i];
+								ptr = active_process_list_head;
 
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
+								do {	
+									if (ptr->pid == 0 && j != 0) continue;
 
-							do {
-								pif->pid = ptr->pid;
-								pif->parent_pid = ptr->parent_pid;
-								pif->state = ptr->state;
-								pif->priority = ptr->priority;
-								pif->cpu_time = ptr->cpu_time;
-								for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
-								ptr = ptr->next;
-								pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
-								idx++;
-							} while (ptr != active_process_list_head && idx < target_idx);
+									pif->pid = ptr->pid;
+									pif->parent_pid = ptr->parent_pid;
+									pif->state = ptr->state;
+									pif->priority = ptr->priority;
+									pif->cpu_time = ptr->cpu_time;
+									for (int i = 0; i < 24; i++) pif->name[i] = ptr->name[i];
+									ptr = ptr->next;
+									pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
+									idx++;
+								} while (ptr != active_process_list_head && idx < target_idx);
+							}
 						}
+						spinlock_release(&(global_closet[j].rq->lock));
 					}
-
+					spinlock_acquire(&blocked_list_lock);
 					ptr = blocked_process_list_head;
 
 					while (ptr != 0 && idx < target_idx){
@@ -810,7 +727,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
 						idx++;
 					}
-
+					spinlock_release(&blocked_list_lock);
+					spinlock_acquire(&blocked_ipc_list_lock);
 					ptr = blocked_ipc_process_list_head;
 
 					while (ptr != 0 && idx < target_idx){
@@ -824,7 +742,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
 						idx++;
 					}
-					
+					spinlock_release(&blocked_ipc_list_lock);
+					spinlock_acquire(&sleeping_list_lock);
 					ptr = sleeping_process_list_head;
 
 					while (ptr != 0 && idx < target_idx){
@@ -838,7 +757,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
 						idx++;
 					}
-
+					spinlock_release(&sleeping_list_lock);
+					spinlock_acquire(&blocked_ipc_send_list_lock);
 					ptr = blocked_ipc_send_process_list_head;
 
 					while (ptr != 0 && idx < target_idx){
@@ -852,7 +772,8 @@ void strap_router(unsigned long scause, unsigned long stval){
 						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
 						idx++;
 					}
-
+					spinlock_release(&blocked_ipc_send_list_lock);
+					spinlock_acquire(&zombie_list_lock);
 					ptr = zombie_process_list_head;
 
 					while (ptr != 0 && idx < target_idx){
@@ -866,7 +787,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 						pif = (struct process_info*)((unsigned long)pif + (sizeof(struct process_info)));
 						idx++;
 					}
-
+					spinlock_release(&zombie_list_lock);
 					(get_runqueue()->curr_process)->tf->u_context[10] = idx;
 					break;
 				}
@@ -962,66 +883,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 						break;
 					}
 					
-					struct process* target = 0;
-
-					struct process* ptr = 0;
-					
-					for (int i = 0; i < 32; i++){
-
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
-
-							do {
-								if ( ptr->pid == a0 ){
-									target = ptr;
-								}
-			
-								ptr = ptr->next;
-							} while (ptr != active_process_list_head && target == 0);
-						}
-					}
-
-					ptr = blocked_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_send_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
-					ptr = sleeping_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
+					struct process* target = get_process_by_pid(a0);					
 					if (target != 0){
 						unsigned int idx = target->pid / 16;
 						unsigned int offset = ((target->pid % 16) * 4);
@@ -1053,66 +915,7 @@ void strap_router(unsigned long scause, unsigned long stval){
 				}
 
 			case 16:{
-					struct process* target = 0;
-					
-					struct process* ptr = 0;
-
-					for (int i = 0; i < 32; i++){
-
-						if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
-							struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
-							ptr = active_process_list_head;
-
-							do {
-								if ( ptr->pid == a0 ){
-									target = ptr;
-								}
-			
-								ptr = ptr->next;
-							} while (ptr != active_process_list_head && target == 0);
-						}
-					}
-
-					ptr = blocked_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-
-					ptr = blocked_ipc_send_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
-					ptr = sleeping_process_list_head;
-
-					while (ptr != 0 && target == 0){
-						if ( ptr->pid == a0){
-							target = ptr;
-						}
-
-						ptr = ptr->next;
-					}
-					
+					struct process* target = get_process_by_pid(a0);					
 					if (target != 0){
 						
 						unsigned int idx = target->pid / 16;
@@ -1237,16 +1040,13 @@ void kmain(void) {
 	}
 	
 	_load_tp((unsigned long)core0_hart_runqueue);
-	
+	core0_hart_runqueue->hart_id = 0;	
 	scheduler_init();
 	timer_init();
 	plic_init();
 	uart_ier_enable();
 	_set_ssie();
 	_set_seie();
-
-	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32, 16);
-	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
 	
 	global_closet = (struct cpu_closet*)kvmalloc((hart * sizeof(struct cpu_closet)));
 
@@ -1254,12 +1054,18 @@ void kmain(void) {
 		global_closet[i]._mmode_stack = (unsigned long*)((char*)kalloc(0) + 4096);
 		global_closet[i]._smode_stack = (unsigned long*)((char*)kalloc(0) + 4096);
 		global_closet[i].flag = 0;
+		global_closet[i].rq = 0;
 	}
+
+	global_closet[0].rq = core0_hart_runqueue;
+
+	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32, 16);
+	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
 
 	for (unsigned long i = 1; i < hart; i++){
 		global_closet[i].flag = 1;
 		*(volatile unsigned int*)(CLINT_BASE + (i * 4)) = 1;
 	}
-
+	smp_ready = 1;
 	oxomoco_loop();
 }

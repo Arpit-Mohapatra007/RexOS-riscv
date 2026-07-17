@@ -1,5 +1,6 @@
 #include "memlayout.h"
 #include "dtb.h"
+#include "smp.h"
 
 volatile unsigned char* get_uart_reg(unsigned int offset) {
 	return (volatile unsigned char*)((unsigned long)(UART0_BASE + offset));
@@ -27,9 +28,11 @@ void uart_init(void) {
 }
 
 void uart_putc(unsigned char text) {
+	spinlock_acquire(&uart_lock);
 	//Polling loop
 	while( ( *(get_uart_reg(5)) & 0x20 ) == 0 ); // Bit 5 : Transmitter FIFO is empty if 1 else when 0
 	*(get_uart_reg(0)) = text;
+	spinlock_release(&uart_lock);
 	return;
 }
 
@@ -61,11 +64,13 @@ void uart_puth(unsigned long code) {
 	return;
 }
 
-unsigned char uart_getc(void){ 
+unsigned char uart_getc(void){
+	spinlock_acquire(&uart_lock);
+	unsigned char text = 0x00;
 	//Bit 0 :  data is waiting in Receive FIFO if 1 else when 0
-	if ( ( *(get_uart_reg(5)) & 0x01 ) == 1 ) return *(get_uart_reg(0));
-
-	return 0x00;
+	if ( ( *(get_uart_reg(5)) & 0x01 ) == 1 ) text = *(get_uart_reg(0));
+	spinlock_release(&uart_lock);
+	return text;
 }
 
 void plic_init(void){

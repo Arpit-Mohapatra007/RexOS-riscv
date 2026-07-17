@@ -4,6 +4,7 @@
 #include "string.h"
 #include "main.h"
 #include "smp.h"
+#include "dtb.h"
 
 extern char _stack_top[];
 
@@ -16,6 +17,8 @@ extern void _off_ssie(void);
 extern void _switch_context(struct process* out_process, struct process* in_process);
 extern void _process_bootstrap(void);
 extern void _wfi(void);
+
+extern struct cpu_closet* global_closet;
 
 #define PID_MAX 32768
 
@@ -34,7 +37,9 @@ unsigned long* pid_registry = 0;
 void scheduler_init(void){
 	(get_runqueue()->curr_process) = (struct process*)kvmalloc(sizeof(struct process));
 	(get_runqueue()->curr_process)->pid = 0;
+	spinlock_acquire(&alive_counter_lock);
 	alive_thread_counter++;
+	spinlock_release(&alive_counter_lock);
 	(get_runqueue()->curr_process)->state = 1;
 	char* name = "oxomoco";
 	for (unsigned int i = 0; i < kstrlen(name); i++){
@@ -69,12 +74,14 @@ void scheduler_init(void){
 
 	pid_registry[0] |= (1UL << 0);
 
+	(get_runqueue()->process_count) = 1;
+
 	_load_sscratch((unsigned long)(get_runqueue()->curr_process)->tf);
 	return;
 }
 
 void schedule(void){
-
+	spinlock_acquire(&(get_runqueue()->lock));
 	struct process* out_process = (get_runqueue()->curr_process);
 
 	if ((get_runqueue()->curr_process)->magic != 0xC00C33E1) kpanic(114,(get_runqueue()->curr_process)->pid);
@@ -109,6 +116,8 @@ void schedule(void){
 
 	struct process* in_process = (get_runqueue()->curr_process);
 
+	spinlock_release(&(get_runqueue()->lock));
+
 	_switch_context(out_process,in_process);
 
 	return;
@@ -124,10 +133,13 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 	unsigned int idx = next_pid / 64;
 	unsigned int offset = next_pid % 64;
 	
+	spinlock_acquire(&pid_registry_lock);
 	if (next_pid < PID_MAX && ((pid_registry[idx]) & (1UL << offset)) == 0) {
 		new_process->pid = next_pid;
 		pid_registry[idx] |= (1UL << offset);
+		spinlock_acquire(&alive_counter_lock);
 		alive_thread_counter++;
+		spinlock_release(&alive_counter_lock);
 		next_pid++;
 	} else {
 		if (next_pid >= PID_MAX) next_pid = 1;
@@ -142,9 +154,12 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 
 		new_process->pid = next_pid;
 		pid_registry[idx] |= (1UL << offset);
+		spinlock_acquire(&alive_counter_lock);
 		alive_thread_counter++;
+		spinlock_release(&alive_counter_lock);
 		next_pid++;
 	}
+	spinlock_release(&pid_registry_lock);
 
 	new_process->state = 0;
 	
@@ -276,7 +291,8 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 	new_process->time_slice = ((priority << 2) + 4);
 	new_process->ticks_left = new_process->time_slice;
 	new_process->cpu_time = 0;
-
+	
+	spinlock_acquire(&(get_runqueue()->lock));
 	if ((get_runqueue()->lookup_bitmap) & (1UL << priority)){
 		new_process->next = (get_runqueue()->active_process_circles)[priority];
 		struct process* tail = (get_runqueue()->active_process_circles)[priority]->prev;
@@ -290,17 +306,22 @@ struct process* spawn_process(char* _binary, char* name, unsigned long sstatus_v
 		(get_runqueue()->lookup_bitmap) |= (1UL << priority);
 	}
 
+	get_runqueue()->process_count++;
+	spinlock_release(&(get_runqueue()->lock));
+
 	return new_process;
 }
 
 void block_process(struct process* target){
+	spinlock_acquire(&blocked_list_lock);
 
 	if(target->pid == 0) kpanic(113,target->tf->epc);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
 	if (emergency_process == target) emergency_process = 0;
-
+	
+	spinlock_acquire(&(get_runqueue()->lock));
 	if (target->next == target){
 		(get_runqueue()->active_process_circles)[target->priority] = 0;
 		(get_runqueue()->lookup_bitmap) &= (~(1UL << target->priority));
@@ -315,7 +336,9 @@ void block_process(struct process* target){
 			(get_runqueue()->active_process_circles)[target->priority] = target->next;
 		}
 	}
-
+	
+	get_runqueue()->process_count--;
+	spinlock_release(&(get_runqueue()->lock));
 	target->next = blocked_process_list_head;
 	
 	if(blocked_process_list_head != 0) blocked_process_list_head->prev = target;
@@ -325,6 +348,8 @@ void block_process(struct process* target){
 	blocked_process_list_head = target;
 
 	target->state = 2;
+
+	spinlock_release(&blocked_list_lock);
 	
 	_trigger_smode_software_interrupt();
 
@@ -332,6 +357,7 @@ void block_process(struct process* target){
 }
 
 void unblock_process(struct process* target){
+	spinlock_acquire(&blocked_list_lock);
 	
 	if(target->state != 2) kpanic(115,target->pid);
 
@@ -352,6 +378,7 @@ void unblock_process(struct process* target){
 		tail->next = head;
 	}
 	
+	spinlock_acquire(&(get_runqueue()->lock));	
 	if ((get_runqueue()->lookup_bitmap) & (1UL << target->priority)){
 		target->next = (get_runqueue()->active_process_circles)[target->priority];
 		struct process* tail = (get_runqueue()->active_process_circles)[target->priority]->prev;
@@ -364,6 +391,11 @@ void unblock_process(struct process* target){
 		(get_runqueue()->active_process_circles)[target->priority] = target;
 		(get_runqueue()->lookup_bitmap) |= (1UL << target->priority);
 	}
+	target->tf->kernel_tp = (unsigned long)get_runqueue();
+	get_runqueue()->process_count++;
+	spinlock_release(&(get_runqueue()->lock));
+	
+	spinlock_release(&blocked_list_lock);
 	
 	if (target->priority < (get_runqueue()->curr_process)->priority){
 		(get_runqueue()->curr_process)->ticks_left = 0;
@@ -374,7 +406,8 @@ void unblock_process(struct process* target){
 }
 
 void exit_process(unsigned long code){
-
+	spinlock_acquire(&zombie_list_lock);
+	spinlock_acquire(&(get_runqueue()->lock));
 	if((get_runqueue()->curr_process)->pid == 0) kpanic(113,(get_runqueue()->curr_process)->tf->epc);
 
 	if((get_runqueue()->curr_process)->magic != 0xC00C33E1) kpanic(114,(get_runqueue()->curr_process)->pid);
@@ -396,6 +429,9 @@ void exit_process(unsigned long code){
 		}
 	}
 
+	get_runqueue()->process_count--;
+	spinlock_release(&(get_runqueue()->lock));
+
 	(get_runqueue()->curr_process)->next = zombie_process_list_head;
 	
 	if(zombie_process_list_head != 0) zombie_process_list_head->prev = (get_runqueue()->curr_process);
@@ -406,27 +442,33 @@ void exit_process(unsigned long code){
 
 	(get_runqueue()->curr_process)->state = 3;
 	(get_runqueue()->curr_process)->exit_code = code;
-
+	
+	spinlock_release(&zombie_list_lock);
+	
 	struct process* ptr = 0;
 
-	for (int i = 0; i < 32; i++){
+	for (int j = 0; j < hart; j++){
+		if (!global_closet[j].rq) continue;
+		spinlock_acquire(&(global_closet[j].rq->lock)); 
+		for (int i = 0; i < 32; i++){
 
-		if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
+			if ((get_runqueue()->lookup_bitmap) & (1UL << i)){
 
-			struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
+				struct process* active_process_list_head = (get_runqueue()->active_process_circles)[i];
 
-			ptr = active_process_list_head;
+				ptr = active_process_list_head;
 
-			do {
-				if (ptr->parent_pid == (get_runqueue()->curr_process)->pid){
-					ptr->parent_pid = 0;
-				}
-				ptr = ptr->next;
-			} while (ptr != active_process_list_head);
+				do {
+					if (ptr->parent_pid == (get_runqueue()->curr_process)->pid){
+						ptr->parent_pid = 0;
+					}
+					ptr = ptr->next;
+				} while (ptr != active_process_list_head);
+			}
 		}
-
+		spinlock_release(&(global_closet[j].rq->lock)); 
 	}
-	
+	spinlock_acquire(&blocked_list_lock);
 	ptr = blocked_process_list_head;
 
 	while (ptr != 0){
@@ -435,7 +477,8 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
-	
+	spinlock_release(&blocked_list_lock);
+	spinlock_acquire(&zombie_list_lock);
 	ptr = zombie_process_list_head;
 
 	while (ptr != 0){
@@ -444,7 +487,8 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
-
+	spinlock_release(&zombie_list_lock);
+	spinlock_acquire(&sleeping_list_lock);
 	ptr = sleeping_process_list_head;
 	
 	while (ptr != 0){
@@ -453,7 +497,8 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
-
+	spinlock_release(&sleeping_list_lock);
+	spinlock_acquire(&blocked_ipc_list_lock);
 	ptr = blocked_ipc_process_list_head;
 	
 	while (ptr != 0){
@@ -462,7 +507,8 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
-
+	spinlock_release(&blocked_ipc_list_lock);
+	spinlock_acquire(&blocked_ipc_send_list_lock);
 	ptr = blocked_ipc_send_process_list_head;
 	
 	while (ptr != 0){
@@ -471,6 +517,7 @@ void exit_process(unsigned long code){
 		}
 		ptr = ptr->next;
 	}
+	spinlock_release(&blocked_ipc_send_list_lock);
 
 	_trigger_smode_software_interrupt();
 
@@ -478,6 +525,7 @@ void exit_process(unsigned long code){
 }
 
 unsigned long wait_process(void){
+	spinlock_acquire(&zombie_list_lock);
 	_off_ssie();
 
 	struct process* header = zombie_process_list_head;
@@ -486,6 +534,7 @@ unsigned long wait_process(void){
 
 	if (header == 0){
 		_set_ssie();
+		spinlock_release(&zombie_list_lock);
 		return (unsigned long)-1;
 	}
 
@@ -503,23 +552,27 @@ unsigned long wait_process(void){
 	}
 	
 	unsigned long code = header->exit_code;
-
+	spinlock_acquire(&alive_counter_lock);
 	alive_thread_counter--;
+	spinlock_release(&alive_counter_lock);
 	unsigned int idx = header->pid / 64;
 	unsigned int offset = header->pid % 64;
-
+	spinlock_acquire(&pid_registry_lock);
 	pid_registry[idx] &= ~(1UL << offset);
-	
+	spinlock_release(&pid_registry_lock);
 	uvm_free(header->satp);
 	kfree(header->kstack);
 	kfree(header->capability_root);
 	kvmfree(header);
 	
 	_set_ssie();
+	spinlock_release(&zombie_list_lock);
 	return code;
 }
 
 void orphan_cleaner(void){
+	spinlock_acquire(&zombie_list_lock);
+
 	struct process* ptr = zombie_process_list_head;
 	
 	while (ptr != 0){
@@ -538,13 +591,14 @@ void orphan_cleaner(void){
 				head->prev = tail;
 				tail->next = head;	
 			}
-
+			spinlock_acquire(&alive_counter_lock);
 			alive_thread_counter--;
+			spinlock_release(&alive_counter_lock);
 			unsigned int idx = ptr->pid / 64;
 			unsigned int offset = ptr->pid % 64;
-
+			spinlock_acquire(&pid_registry_lock);
 			pid_registry[idx] &= ~(1UL << offset);
-
+			spinlock_release(&pid_registry_lock);
 			
 			uvm_free(ptr->satp);
 			kfree(ptr->kstack);
@@ -554,16 +608,19 @@ void orphan_cleaner(void){
 
 		ptr = next_ptr;
 	}
+
+	spinlock_release(&zombie_list_lock);
 }
 
 void sleep_process (struct process* target, unsigned int ticks){
+	spinlock_acquire(&sleeping_list_lock);
 	
 	if(target->pid == 0) kpanic(113,target->tf->epc);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
 	if (emergency_process == target) emergency_process = 0;
-
+	spinlock_acquire(&(get_runqueue()->lock));
 	if (target->next == target){
 		(get_runqueue()->active_process_circles)[target->priority] = 0;
 		(get_runqueue()->lookup_bitmap) &= (~(1UL << target->priority));
@@ -578,7 +635,9 @@ void sleep_process (struct process* target, unsigned int ticks){
 			(get_runqueue()->active_process_circles)[target->priority] = target->next;
 		}
 	}
+	get_runqueue()->process_count--;
 
+	spinlock_release(&(get_runqueue()->lock));
 	target->next = sleeping_process_list_head;
 	
 	if(sleeping_process_list_head != 0) sleeping_process_list_head->prev = target;
@@ -590,6 +649,8 @@ void sleep_process (struct process* target, unsigned int ticks){
 	target->state = 4;
 
 	target->ticks_left = ticks;
+
+	spinlock_release(&sleeping_list_lock);
 	
 	_trigger_smode_software_interrupt();
 
@@ -598,12 +659,14 @@ void sleep_process (struct process* target, unsigned int ticks){
 }
 
 void block_ipc_process(struct process* target){
+	spinlock_acquire(&blocked_ipc_list_lock);
 
 	if(target->pid == 0) kpanic(113,target->tf->epc);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
 	if (emergency_process == target) emergency_process = 0;
+	spinlock_acquire(&(get_runqueue()->lock));
 
 	if (target->next == target){
 		(get_runqueue()->active_process_circles)[target->priority] = 0;
@@ -619,6 +682,8 @@ void block_ipc_process(struct process* target){
 			(get_runqueue()->active_process_circles)[target->priority] = target->next;
 		}
 	}
+	get_runqueue()->process_count--;
+	spinlock_release(&(get_runqueue()->lock));
 
 	target->next = blocked_ipc_process_list_head;
 	
@@ -630,13 +695,16 @@ void block_ipc_process(struct process* target){
 
 	target->state = 5;
 	
+	spinlock_release(&blocked_ipc_list_lock);
+	
 	_trigger_smode_software_interrupt();
 
 	return;
 }
 
 void unblock_ipc_process(struct process* target){
-	
+	spinlock_acquire(&blocked_ipc_list_lock);
+
 	if(target->state != 5) kpanic(115,target->pid);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
@@ -655,7 +723,7 @@ void unblock_ipc_process(struct process* target){
 		if (head != 0) head->prev = tail;
 		tail->next = head;
 	}
-	
+	spinlock_acquire(&(get_runqueue()->lock));
 	if ((get_runqueue()->lookup_bitmap) & (1UL << target->priority)){
 		target->next = (get_runqueue()->active_process_circles)[target->priority];
 		struct process* tail = (get_runqueue()->active_process_circles)[target->priority]->prev;
@@ -668,6 +736,10 @@ void unblock_ipc_process(struct process* target){
 		(get_runqueue()->active_process_circles)[target->priority] = target;
 		(get_runqueue()->lookup_bitmap) |= (1UL << target->priority);
 	}
+	target->tf->kernel_tp = (unsigned long)get_runqueue();
+	get_runqueue()->process_count++;
+	spinlock_release(&(get_runqueue()->lock));
+	spinlock_release(&blocked_ipc_list_lock);
 
 	if (target->priority < (get_runqueue()->curr_process)->priority){
 		(get_runqueue()->curr_process)->ticks_left = 0;
@@ -678,13 +750,14 @@ void unblock_ipc_process(struct process* target){
 }
 
 void block_ipc_send_process(struct process* target){
+	spinlock_acquire(&blocked_ipc_send_list_lock);
 
 	if(target->pid == 0) kpanic(113,target->tf->epc);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
 
 	if (emergency_process == target) emergency_process = 0;
-
+	spinlock_acquire(&(get_runqueue()->lock));
 	if (target->next == target){
 		(get_runqueue()->active_process_circles)[target->priority] = 0;
 		(get_runqueue()->lookup_bitmap) &= (~(1UL << target->priority));
@@ -699,7 +772,8 @@ void block_ipc_send_process(struct process* target){
 			(get_runqueue()->active_process_circles)[target->priority] = target->next;
 		}
 	}
-
+	get_runqueue()->process_count--;
+	spinlock_release(&(get_runqueue()->lock));
 	target->next = blocked_ipc_send_process_list_head;
 	
 	if(blocked_ipc_send_process_list_head != 0) blocked_ipc_send_process_list_head->prev = target;
@@ -709,14 +783,17 @@ void block_ipc_send_process(struct process* target){
 	blocked_ipc_send_process_list_head = target;
 
 	target->state = 6;
-	
+
+	spinlock_release(&blocked_ipc_send_list_lock);
+
 	_trigger_smode_software_interrupt();
 
 	return;
 }
 
 void unblock_ipc_send_process(struct process* target){
-	
+	spinlock_acquire(&blocked_ipc_send_list_lock);
+
 	if(target->state != 6) kpanic(115,target->pid);
 
 	if(target->magic != 0xC00C33E1) kpanic(114,target->pid);
@@ -735,7 +812,7 @@ void unblock_ipc_send_process(struct process* target){
 		if (head != 0) head->prev = tail;
 		tail->next = head;
 	}
-	
+	spinlock_acquire(&(get_runqueue()->lock));
 	if ((get_runqueue()->lookup_bitmap) & (1UL << target->priority)){
 		target->next = (get_runqueue()->active_process_circles)[target->priority];
 		struct process* tail = (get_runqueue()->active_process_circles)[target->priority]->prev;
@@ -748,6 +825,10 @@ void unblock_ipc_send_process(struct process* target){
 		(get_runqueue()->active_process_circles)[target->priority] = target;
 		(get_runqueue()->lookup_bitmap) |= (1UL << target->priority);
 	}
+	target->tf->kernel_tp = (unsigned long)get_runqueue();
+	get_runqueue()->process_count++;
+	spinlock_release(&(get_runqueue()->lock));
+	spinlock_release(&blocked_ipc_send_list_lock);
 
 	if (target->priority < (get_runqueue()->curr_process)->priority){
 		(get_runqueue()->curr_process)->ticks_left = 0;
@@ -758,6 +839,7 @@ void unblock_ipc_send_process(struct process* target){
 }
 
 void update_sleep_list (void){
+	spinlock_acquire(&sleeping_list_lock);
 	struct process* ptr = sleeping_process_list_head;
 
 	while (ptr != 0) {
@@ -785,7 +867,7 @@ void update_sleep_list (void){
 				if (head != 0) head->prev = tail;
 				tail->next = head;
 			}
-	
+			spinlock_acquire(&(get_runqueue()->lock));
 			if ((get_runqueue()->lookup_bitmap) & (1UL << ptr->priority)){
 				ptr->next = (get_runqueue()->active_process_circles)[ptr->priority];
 				struct process* tail = (get_runqueue()->active_process_circles)[ptr->priority]->prev;
@@ -798,7 +880,9 @@ void update_sleep_list (void){
 				(get_runqueue()->active_process_circles)[ptr->priority] = ptr;
 				(get_runqueue()->lookup_bitmap) |= (1UL << ptr->priority);
 			}
-
+			ptr->tf->kernel_tp = (unsigned long)get_runqueue();
+			get_runqueue()->process_count++;
+			spinlock_release(&(get_runqueue()->lock));
 			if (ptr->priority < (get_runqueue()->curr_process)->priority){
 				(get_runqueue()->curr_process)->ticks_left = 0;
 			}
@@ -806,6 +890,8 @@ void update_sleep_list (void){
 
 		ptr = next_ptr;
 	}
+
+	spinlock_release(&sleeping_list_lock);
 }
 
 void anti_starvation_sweeper(void){

@@ -2,6 +2,7 @@
 #include "main.h"
 #include "dtb.h"
 #include "memlayout.h"
+#include "smp.h"
 
 extern char _text_start[];
 extern char _text_end[];
@@ -344,6 +345,7 @@ void* kvmem_cache_alloc(struct kvmem_cache* cache, void* caller){
 }
 
 void* kvmalloc(unsigned long size){
+	spinlock_acquire(&kvmalloc_lock);
 	void* caller = __builtin_return_address(0);
 	unsigned long* slot;
 
@@ -362,13 +364,13 @@ void* kvmalloc(unsigned long size){
 		
 		slot = (unsigned long*)kalloc(order);
 	}
-
+	spinlock_release(&kvmalloc_lock);
 	return (void*)slot;
 }
 
 void kvmfree(void* slot){
 	if ( !slot) return;
-	
+	spinlock_acquire(&kvmalloc_lock);
 	unsigned long base_addr = ( (unsigned long)slot & (~0xFFF) );
 
 	struct slab* curr_header = (struct slab*)base_addr;
@@ -413,7 +415,7 @@ void kvmfree(void* slot){
 
 				curr_parent_cache->list_empty = curr_header;	
 			}
-						
+			spinlock_release(&kvmalloc_lock);			
 			return;
 		}
 	}
@@ -441,7 +443,7 @@ void kvmfree(void* slot){
 				if (curr_header->next != 0) curr_header->next->prev = curr_header;
 
 				curr_parent_cache->list_partial = curr_header;
-	
+				spinlock_release(&kvmalloc_lock);
 				return;
 			}
 			curr_header = curr_header->next;
@@ -470,6 +472,7 @@ void kvmfree(void* slot){
 
 					curr_parent_cache->list_empty = curr_header;	
 				}
+				spinlock_release(&kvmalloc_lock);
 				return;
 			}
 			curr_header = curr_header->next;
@@ -477,7 +480,8 @@ void kvmfree(void* slot){
 	}
 	
 	//free alloc
-	kfree((void*)base_addr);	
+	kfree((void*)base_addr);
+	spinlock_release(&kvmalloc_lock);
 	return;
 }
 

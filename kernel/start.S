@@ -9,6 +9,7 @@
 .global _load_tp
 
 .extern global_closet
+.extern smp_ready
 
 _start:
 	csrr a0, mhartid
@@ -68,11 +69,17 @@ _done:
 	j _done
 
 _hart_park:
+	li t0, 8
+	csrs mie, t0
 	wfi
 
 _smp_awakening_sequence:
+	la t0, smp_ready
+	ld t0, 0(t0)
+	beqz t0, _smp_awakening_sequence
+
 	csrr t0, mhartid
-	li t1, 24
+	li t1, 32
 	mul t0, t0, t1
 	la t2, global_closet
 	ld t2, 0(t2)
@@ -85,6 +92,12 @@ _smp_awakening_sequence:
 	csrw mscratch, t1
 
 	ld sp, 8(t2)
+
+	la t0, _mmode_trap_handler
+	csrw mtvec, t0
+
+	la t0, _smode_trap_handler
+	csrw stvec, t0
 
 	la t1, root_table
 	ld t1, 0(t1)
@@ -131,7 +144,8 @@ _smp_awakening_sequence:
 	li t1, 0x02000000
 	add t1, t1, t0
 	sw x0, 0(t1)
-
+	
+	csrr a0, mhartid
 	mret
 
 .align 2
@@ -172,6 +186,7 @@ _mmode_trap_handler:
 	sd x31, 240(sp)
 	csrr a0, mcause
 	csrr a1, mepc
+	csrr a2, mhartid
 	call mtrap_router
 	ld x31, 240(sp)
 	ld x30, 232(sp)
