@@ -913,3 +913,76 @@ void anti_starvation_sweeper(void){
 	
 	return;
 }
+
+int steal_process(void){
+	struct process* target = 0;
+	for (unsigned long core = 0; core < hart; core++){
+		if (!global_closet[core].rq) continue;
+		if (global_closet[core].rq == get_runqueue()) continue;
+		if ((global_closet[core].rq)->process_count > 1){
+			spinlock_acquire(&(global_closet[core].rq->lock));
+			for (int i = 0; i < 31; i++){
+				if ((global_closet[core].rq)->lookup_bitmap & (1UL << i)){
+					struct process* head = global_closet[core].rq->active_process_circles[i];
+					struct process* ptr = head;
+					int found_target = 0;
+					do {
+						
+						if (ptr != global_closet[core].rq->curr_process){
+							target = ptr;
+							found_target = 1;
+							break;
+						}
+						ptr = ptr->next;
+
+					} while (ptr != head);
+
+					if (found_target){
+						if (target->next == target){
+							(global_closet[core].rq->active_process_circles)[target->priority] = 0;
+							(global_closet[core].rq->lookup_bitmap) &= (~(1UL << target->priority));
+						} else {
+							struct process* head = target->next;
+							struct process* tail = target->prev;
+
+							head->prev = tail;
+							tail->next = head;
+
+							if (target == (global_closet[core].rq->active_process_circles)[target->priority]){
+								(global_closet[core].rq->active_process_circles)[target->priority] = target->next;
+							}
+						}
+						global_closet[core].rq->process_count--;
+						break;
+					}
+				}
+			}	
+			spinlock_release(&(global_closet[core].rq->lock));
+			if (target != 0) break;
+		}	
+	}
+
+	if (target != 0){
+		spinlock_acquire(&(get_runqueue()->lock));
+		if ((get_runqueue()->lookup_bitmap) & (1UL << target->priority)){
+			target->next = (get_runqueue()->active_process_circles)[target->priority];
+			struct process* tail = (get_runqueue()->active_process_circles)[target->priority]->prev;
+			target->prev = tail;
+			tail->next = target;
+			(get_runqueue()->active_process_circles)[target->priority]->prev = target;
+		} else {
+			target->next = target;
+			target->prev = target;	
+			(get_runqueue()->active_process_circles)[target->priority] = target;
+			(get_runqueue()->lookup_bitmap) |= (1UL << target->priority);
+		}
+		target->tf->kernel_tp = (unsigned long)get_runqueue();
+		get_runqueue()->process_count++;
+		spinlock_release(&(get_runqueue()->lock));
+
+		return 1;
+	}
+
+	return 0;
+}
+

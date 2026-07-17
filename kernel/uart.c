@@ -27,40 +27,51 @@ void uart_init(void) {
 	return;	
 }
 
-void uart_putc(unsigned char text) {
-	spinlock_acquire(&uart_lock);
+void uart_putc_core(unsigned char text) {
 	//Polling loop
 	while( ( *(get_uart_reg(5)) & 0x20 ) == 0 ); // Bit 5 : Transmitter FIFO is empty if 1 else when 0
 	*(get_uart_reg(0)) = text;
+	return;
+}
+
+void uart_putc(unsigned char text) {
+	spinlock_acquire(&uart_lock);
+	uart_putc_core(text);
 	spinlock_release(&uart_lock);
 	return;
 }
 
 void uart_puts(char* string) {
+	spinlock_acquire(&uart_lock);
 	while ( *string != '\0' ) {
-		uart_putc(*string);
+		uart_putc_core(*string);
 		string++;
 	}
+	spinlock_release(&uart_lock);
 	return;
 }
 
 void uart_putsn(char* string, unsigned int max_length) {
+	spinlock_acquire(&uart_lock);
 	unsigned int counter = 0;
 	while ( *string != '\0' && counter < max_length) {
-		uart_putc(*string); string++; counter++;
+		uart_putc_core(*string); string++; counter++;
 	}
+	spinlock_release(&uart_lock);
 	return;
 }
 
 void uart_puth(unsigned long code) {
+	spinlock_acquire(&uart_lock);
 	for (int i = 0; i < 16; i++) {
 		int nibble = ( ( code >> ( 60 - ( i * 4 ) ) ) & 0xF );
 		if ( nibble <= 9 ) {
-			uart_putc((char)(nibble + '0'));
+			uart_putc_core((char)(nibble + '0'));
 		} else {
-			uart_putc((char)(nibble - 10 + 'A'));
+			uart_putc_core((char)(nibble - 10 + 'A'));
 		}
 	}
+	spinlock_release(&uart_lock);
 	return;
 }
 
@@ -82,7 +93,6 @@ void plic_init(void){
 
 void uart_ier_enable(void){
 	*(get_uart_reg(1)) = 0x1;
-
 	return;
 }
 

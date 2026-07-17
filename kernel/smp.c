@@ -5,9 +5,11 @@
 #include "timer.h"
 #include "uart.h"
 
+extern void _off_ssie(void);
 extern void _set_ssie(void);
 extern void _set_seie(void);
 extern void _wfi(void);
+extern void _trigger_smode_software_interrupt(void);
 extern void _load_tp(unsigned long hart_runqueue_addr);
 
 extern struct cpu_closet* global_closet;
@@ -27,13 +29,21 @@ extern char _binary_user_worker_elf_start[];
 
 void idle_loop (void){
 	while(1){
-		_wfi();
+		_off_ssie();
+
+		if (steal_process()){
+			_set_ssie();
+			_set_seie();
+			_trigger_smode_software_interrupt();
+		} else {
+			_set_ssie();
+			_set_seie();
+			_wfi();
+		}
 	}
 }
 
 void smp_kmain(unsigned long hart_id){
-	uart_puth(hart_id);
-	uart_puts("\n");
 	struct hart_runqueue* core_hart_runqueue = (struct hart_runqueue*)kvmalloc(sizeof(struct hart_runqueue));
 	
 	unsigned char* ptr = (unsigned char*)core_hart_runqueue;
@@ -83,7 +93,5 @@ void smp_kmain(unsigned long hart_id){
 	_set_ssie();
 	_set_seie();
 
-	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 2);
-	
 	idle_loop();
 }

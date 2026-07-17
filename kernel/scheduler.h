@@ -86,5 +86,6 @@ void block_ipc_send_process(struct process* target);
 void unblock_ipc_send_process(struct process* target);
 void update_sleep_list (void);
 void anti_starvation_sweeper(void);
+int steal_process(void);
 
 #endif

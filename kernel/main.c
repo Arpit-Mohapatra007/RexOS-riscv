@@ -1014,9 +1014,16 @@ void oxomoco_loop (void){
 	while(1){
 		_off_ssie();
 		orphan_cleaner();
-		_set_ssie();
-		_set_seie();
-		_wfi();
+
+		if (steal_process()){
+			_set_ssie();
+			_set_seie();
+			_trigger_smode_software_interrupt();
+		} else {
+			_set_ssie();
+			_set_seie();
+			_wfi();
+		}
 	}
 }
 
@@ -1060,7 +1067,7 @@ void kmain(void) {
 	global_closet[0].rq = core0_hart_runqueue;
 
 	shell_ptr = spawn_process(_binary_user_shell_elf_start, "SHELL", 32, 16);
-	struct process* worker = spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
+	spawn_process(_binary_user_worker_elf_start, "WORKER", 32, 20);
 
 	for (unsigned long i = 1; i < hart; i++){
 		global_closet[i].flag = 1;
