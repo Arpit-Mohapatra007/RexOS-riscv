@@ -3,6 +3,7 @@
 #include "vm.h"
 #include "kalloc.h"
 #include "timer.h"
+#include "dtb.h"
 #include "uart.h"
 
 extern void _off_ssie(void);
@@ -43,7 +44,9 @@ void idle_loop (void){
 	}
 }
 
-void smp_kmain(unsigned long hart_id){
+void smp_kmain(unsigned long hart_id){	
+	disable_timer_interrupts(hart_id);	
+	// uart_puth(hart_id);
 	struct hart_runqueue* core_hart_runqueue = (struct hart_runqueue*)kvmalloc(sizeof(struct hart_runqueue));
 	
 	unsigned char* ptr = (unsigned char*)core_hart_runqueue;

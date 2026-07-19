@@ -170,13 +170,13 @@ void kvm_init(void){
 	}
 
 	// uart
-	kvm_map(root_table,UART0_BASE,UART0_BASE,4096,6);
+	kvm_map(root_table,uart.base_addr,uart.base_addr,4096,6);
 
 	//clint
-	kvm_map(root_table,CLINT_BASE,CLINT_BASE,0x10000,6);
+	kvm_map(root_table,clint.base_addr,clint.base_addr,0x10000,6);
 
 	//plic
-	kvm_map(root_table,PLIC_BASE,PLIC_BASE,0x400000,6);
+	kvm_map(root_table,plic.base_addr,plic.base_addr,0x400000,6);
 
 	//.text
 	kvm_map(root_table,(unsigned long)_text_start,(unsigned long)_text_start,(unsigned long)_text_end - (unsigned long)_text_start,10);
@@ -191,7 +191,7 @@ void kvm_init(void){
 	kvm_map(root_table,(unsigned long)_bss_start,(unsigned long)_bss_start,(unsigned long)_bss_end - (unsigned long)_bss_start,6);
 
 	//heap
-	unsigned long ram_end = ram.ram_base_addr + ram.ram_total_size;
+	unsigned long ram_end = ram.base_addr + ram.total_size;
 	unsigned long heap_size = ram_end - (unsigned long)_bss_end;
 	
 	kvm_map(root_table,(unsigned long)_bss_end,(unsigned long)_bss_end,heap_size,6);
@@ -626,7 +626,7 @@ void uvm_free(unsigned long user_satp){
 			if ( lv2_table[i] & 0xE ) {
 				if ( lv2_table[i] & 0x10 ){ 
 					unsigned long leaf_phys_addr = ((lv2_table[i] >> 10) << 12);
-					unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+					unsigned long idx = ((leaf_phys_addr - ram.base_addr) / 4096);
 
 					if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
 
@@ -642,7 +642,7 @@ void uvm_free(unsigned long user_satp){
 						if ( lv1_table[j] & 0xE ) {
 							if ( lv1_table[j] & 0x10 ){
 								unsigned long leaf_phys_addr = ((lv1_table[j] >> 10) << 12);
-								unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+								unsigned long idx = ((leaf_phys_addr - ram.base_addr) / 4096);
 
 								if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
 
@@ -656,7 +656,7 @@ void uvm_free(unsigned long user_satp){
 							for (int k = 0; k < 512; k++){
 								if (( lv0_table[k] & 0x10 ) && ( lv0_table[k] & 0x1 )){
 									unsigned long leaf_phys_addr = ((lv0_table[k] >> 10) << 12);
-									unsigned long idx = ((leaf_phys_addr - ram.ram_base_addr) / 4096);
+									unsigned long idx = ((leaf_phys_addr - ram.base_addr) / 4096);
 
 									if (page_array[idx].flag == 1) kfree((void*)leaf_phys_addr);
 

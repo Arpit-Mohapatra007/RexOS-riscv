@@ -20,6 +20,7 @@ extern void _load_umode_stvec(void);
 extern void _load_smode_stvec(void);
 extern void _flush_tlb(void);
 extern void _load_tp(unsigned long hart_runqueue_addr);
+extern void _set_mie(void);
 
 extern char _binary_user_shell_elf_start[];
 extern char _binary_user_worker_elf_start[];
@@ -30,7 +31,7 @@ struct cpu_closet* global_closet;
 struct process* shell_ptr = 0;
 unsigned long irq_registry[64] = {0};
 volatile unsigned char uart_buff = 0x00;
-unsigned int smp_ready = 0;
+unsigned long smp_ready = 0;
 
 void print_banner(void) { 
 	uart_puts("\033[38;5;82;48;5;236m");
@@ -315,6 +316,11 @@ void mtrap_router(unsigned long mcause, unsigned long mepc, unsigned long mharti
 	if (((mcause >> 63) & 0x1) && error_code == 7){
 		update_timer(mhartid);
 		_trigger_smode_software_interrupt();
+	} else if (((mcause >> 63) & 0x1) && error_code == 3){
+		*(volatile unsigned int*)(clint.base_addr + (mhartid * 4)) = 0;	
+	}else if (!((mcause >> 63) & 0x1) && error_code == 9){
+		_set_mie();
+		return;
 	} else {
 		kpanic(mcause,mepc);
 	}		
@@ -1028,15 +1034,17 @@ void oxomoco_loop (void){
 }
 
 void kmain(void) {
+	dtb_parser_mmio();
+	dtb_parser_time();
+	dtb_parser_context();
+	dtb_parser_hart();
 	uart_init();
 	print_banner();
 	prompt();
 	kalloc_init();
 	kvmalloc_init();
 	kvm_init();
-	dtb_parser_time();
-	dtb_parser_context();
-	dtb_parser_hart();
+	disable_timer_interrupts(0);
 
 	struct hart_runqueue* core0_hart_runqueue = (struct hart_runqueue*)kvmalloc(sizeof(struct hart_runqueue));
 
@@ -1071,7 +1079,7 @@ void kmain(void) {
 
 	for (unsigned long i = 1; i < hart; i++){
 		global_closet[i].flag = 1;
-		*(volatile unsigned int*)(CLINT_BASE + (i * 4)) = 1;
+		*(volatile unsigned int*)(clint.base_addr + (i * 4)) = 1;
 	}
 	smp_ready = 1;
 	oxomoco_loop();

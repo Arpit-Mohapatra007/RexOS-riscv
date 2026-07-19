@@ -25,6 +25,8 @@ _start:
 
 	li t0, -1
 	csrw medeleg, t0
+	li t1, 0x200
+	csrc medeleg, t1
 	csrw mideleg, t0	
 	
 	la t0, _mmode_trap_handler
@@ -47,13 +49,6 @@ _done:
 	csrc mstatus, t0
 	li t0, 0x0800
 	csrs mstatus, t0
-
-	la t0, 0x02004000
-	li t1, -1
-	sd t1, 0(t0)
-
-	li t0, 128
-	csrs mie, t0
 
 	li t0, 32
 	csrs mstatus, t0
@@ -114,20 +109,14 @@ _smp_awakening_sequence:
 
 	li t0, -1
 	csrw medeleg, t0
+	li t1, 0x200
+	csrc medeleg, t1
 	csrw mideleg, t0	
 
 	li t0, 0x1800
 	csrc mstatus, t0
 	li t0, 0x0800
 	csrs mstatus, t0
-
-	la t0, 0x02004000
-	csrr t2, mhartid
-	li t1, 8
-	mul t2, t2, t1
-	add t0, t0, t2
-	li t1, -1
-	sd t1, 0(t0)
 
 	li t0, 128
 	csrs mie, t0
@@ -137,13 +126,6 @@ _smp_awakening_sequence:
 
 	la t1, smp_kmain
 	csrw mepc, t1
-
-	csrr t0, mhartid
-	li t1, 4
-	mul t0, t0, t1
-	li t1, 0x02000000
-	add t1, t1, t0
-	sw x0, 0(t1)
 	
 	csrr a0, mhartid
 	mret

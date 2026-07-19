@@ -12,14 +12,14 @@ unsigned long *free_lists;
 void kalloc_init(void){
 	dtb_parser_ram();
 	unsigned long metadata_start = ( ( (unsigned long)_bss_end + 0xFFF ) & ( ~0xFFF ) );
-	unsigned long total_pages = ram.ram_total_size / 4096;
+	unsigned long total_pages = ram.total_size / 4096;
 	unsigned long metadata_blob_size = ( total_pages * sizeof(struct page) ) + ( MAX_ORDER * 16 );
 	unsigned long metadata_end = metadata_start + metadata_blob_size;
 	unsigned long max_block_size = ( 1UL << ( MAX_ORDER - 1 ) ) * 4096;
 	unsigned long alignment_mask = max_block_size - 1;
 
 	unsigned long free_pool_start = ( ( metadata_end + alignment_mask ) & ( ~alignment_mask ) );
-	unsigned long pool_horizon = ram.ram_base_addr + ram.ram_total_size;
+	unsigned long pool_horizon = ram.base_addr + ram.total_size;
 	
 	if ( free_pool_start >= pool_horizon ) kpanic(106,free_pool_start);
 
@@ -40,7 +40,7 @@ void kalloc_init(void){
 
 	while (current_phys_addr < pool_horizon) {
 
-		unsigned long idx = ( current_phys_addr - ram.ram_base_addr ) / 4096;
+		unsigned long idx = ( current_phys_addr - ram.base_addr ) / 4096;
 
 		page_array[idx].flag = 0;
 		page_array[idx].order = MAX_ORDER - 1;
@@ -101,7 +101,7 @@ void* kalloc(unsigned int order){
 	page_array[idx].prev_idx = 0xFFFFFFFF;
 	page_array[idx].alloc_caller = __builtin_return_address(0);
 
-	unsigned long phys_addr = ram.ram_base_addr + ( idx * 4096 );
+	unsigned long phys_addr = ram.base_addr + ( idx * 4096 );
 	spinlock_release(&kalloc_lock);
 	return (void*) phys_addr;
 }
@@ -110,8 +110,8 @@ void kfree(void* phys_addr){
 	spinlock_acquire(&kalloc_lock);
 	if ( ( (unsigned long)phys_addr & 0xFFF ) != 0 ) kpanic(104, (unsigned long)phys_addr);
 
-	unsigned long idx = ( (unsigned long)phys_addr - ram.ram_base_addr ) / 4096;
-	unsigned long total_pages = ram.ram_total_size / 4096;
+	unsigned long idx = ( (unsigned long)phys_addr - ram.base_addr ) / 4096;
+	unsigned long total_pages = ram.total_size / 4096;
 
 	if ( idx >= total_pages ) kpanic(102, (unsigned long)phys_addr);
 	if ( page_array[idx].flag == 0 ) kpanic(103, (unsigned long)phys_addr);

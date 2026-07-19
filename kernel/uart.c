@@ -3,11 +3,11 @@
 #include "smp.h"
 
 volatile unsigned char* get_uart_reg(unsigned int offset) {
-	return (volatile unsigned char*)((unsigned long)(UART0_BASE + offset));
+	return (volatile unsigned char*)((unsigned long)(uart.base_addr + offset));
 }
 
 volatile unsigned int* get_plic_reg(unsigned long offset){
-	return (volatile unsigned int*)((unsigned long)(PLIC_BASE + offset));
+	return (volatile unsigned int*)((unsigned long)(plic.base_addr + offset));
 }
 
 void uart_init(void) {
